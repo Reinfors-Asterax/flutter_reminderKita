@@ -1,0 +1,5059 @@
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..191115e
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,2 @@
++SUPABASE_URL=https://your-project.supabase.co
++SUPABASE_ANON_KEY=your-anon-key
+diff --git a/.gitignore b/.gitignore
+index 4df7bee..6bf4430 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -35,6 +35,7 @@ migrate_working_dir/
+ 
+ .env
+ .env.*
++!.env.example
+ 
+ 
+ # Symbolication related
+diff --git a/IMPLEMENTATION_REPORT.md b/IMPLEMENTATION_REPORT.md
+new file mode 100644
+index 0000000..0d35e86
+--- /dev/null
++++ b/IMPLEMENTATION_REPORT.md
+@@ -0,0 +1,178 @@
++# ReminderKita RBAC Implementation
++
++Baseline: `Reinforss/flutter_reminderKita@c70ddb2`
++
++## 1. Existing Architecture
++
++- State management: local `StatefulWidget` and `setState`; no Provider, Bloc,
++  Riverpod, or Redux.
++- Routing: named routes on `MaterialApp`.
++- Authentication: Supabase Auth with email/password. User name, NIM, and the
++  previous role value were stored in auth metadata.
++- Database: Supabase Postgres tables `kelas`, `anggota_kelas`, `matakuliah`,
++  `jadwal_kelas`, and `tasks`.
++- Storage: Supabase Storage bucket `files`.
++- Notifications: `flutter_local_notifications` and `timezone`.
++- Firebase: no Firebase dependency, config, or initialization exists.
++- Models: data was passed as `Map<String, dynamic>` without domain models.
++- Services: only `NotificationService` existed; pages queried Supabase
++  directly.
++
++The existing UI, `setState` state management, legacy tables, and primary pages
++are retained.
++
++## 2. Changed Files
++
++### Configuration and documentation
++
++- `.env.example`
++- `.gitignore`
++- `IMPLEMENTATION_REPORT.md`
++- `RBAC_CHANGES.patch` (generated complete diff)
++- `README.md`
++- `pubspec.yaml`
++- `pubspec.lock`
++
++### Existing application files
++
++- `lib/main.dart`
++- `lib/login_page.dart`
++- `lib/register_page.dart`
++- `lib/home_page.dart`
++- `lib/pages/class_board_page.dart`
++- `lib/pages/create_class_page.dart`
++- `lib/pages/profile_page.dart`
++- `lib/pages/schedule_page.dart`
++- `lib/pages/subject_management_page.dart`
++- `lib/pages/task_form_page.dart`
++- `lib/services/notification_service.dart`
++
++### New RBAC and domain files
++
++- `lib/models/user_role.dart`
++- `lib/models/app_user.dart`
++- `lib/models/class_model.dart`
++- `lib/models/course.dart`
++- `lib/models/class_schedule.dart`
++- `lib/models/announcement.dart`
++- `lib/models/reminder.dart`
++- `lib/services/auth_service.dart`
++- `lib/services/class_service.dart`
++- `lib/services/course_service.dart`
++- `lib/services/schedule_service.dart`
++- `lib/services/announcement_service.dart`
++- `lib/services/reminder_service.dart`
++- `lib/routing/app_router.dart`
++- `lib/routing/auth_guard.dart`
++- `lib/routing/role_guard.dart`
++- `lib/routing/navigation.dart`
++- `lib/pages/auth_gate.dart`
++- `lib/pages/access_denied_page.dart`
++- `lib/pages/role_dashboard_page.dart`
++- `lib/pages/user_management_page.dart`
++- `lib/pages/announcement_page.dart`
++
++### Database and tests
++
++- `supabase/migrations/202606120001_rbac_modules.sql`
++- `supabase/README.md`
++- `test/rbac_models_test.dart`
++
++## 3. Implementation Stages
++
++1. Introduced canonical roles: `admin`, `lecturer`, `class_leader`, and
++   `student`, including compatibility with legacy Indonesian role strings.
++2. Added a centralized permission matrix, `AuthGuard`, and `RoleGuard`.
++3. Added session loading from `profiles`, with auth metadata and class
++   membership fallback for installations awaiting migration.
++4. Added role-specific dashboards and automatic post-login redirect.
++5. Added typed models and Supabase services for Class, Course, Schedule,
++   Announcement, and Reminder.
++6. Kept `tasks` as the physical reminder table and mapped its legacy Indonesian
++   columns to the requested Reminder domain fields.
++7. Added admin role management, announcement CRUD, course update support, and
++   permission-aware actions in existing class/reminder/schedule pages.
++8. Centralized local notification scheduling for H-7, H-3, H-1, and Hari H.
++   Visible reminders are synchronized on every class refresh so target users
++   schedule notifications on their own devices.
++9. Added Supabase profiles, announcements, indexes, join-class RPC, migration
++   backfills, and restrictive RLS policies.
++
++## 4. Diff
++
++The complete reviewable patch is generated in `RBAC_CHANGES.patch`. It is based
++on the remote baseline commit because the provided workspace did not contain a
++`.git` directory. On Windows clones using `core.autocrlf=true`, validate or
++apply it with:
++
++```bash
++git apply --check --ignore-space-change RBAC_CHANGES.patch
++git apply --ignore-space-change RBAC_CHANGES.patch
++```
++
++## 5. Migration Plan
++
++1. Back up the Supabase database.
++2. Apply the migration to a staging project.
++3. Verify existing user, class membership, task, course, and schedule counts.
++4. Bootstrap the first admin as documented in `supabase/README.md`.
++5. Assign lecturer roles and link existing courses to lecturers. The migration
++   automatically links exact lecturer-name matches.
++6. Test every role against RLS before production rollout.
++7. Deploy the Flutter build with `SUPABASE_URL` and `SUPABASE_ANON_KEY` supplied
++   through `--dart-define`.
++8. Roll out production migration during a maintenance window because existing
++   policies on managed tables are replaced.
++
++No destructive table rename is required. Existing `tasks` rows and legacy role
++strings remain readable.
++
++## 6. Testing Checklist
++
++- [x] `flutter analyze` returns no issues.
++- [x] Role parsing and permission matrix unit tests pass.
++- [x] Reminder legacy mapping and effective expired status tests pass.
++- [x] Windows debug build succeeds.
++- [ ] Apply migration to staging Supabase and run SQL/RLS integration tests.
++- [ ] Verify login redirect for all four roles.
++- [ ] Verify students cannot mutate reminders, schedules, users, or courses.
++- [ ] Verify lecturers only see taught/member classes.
++- [ ] Verify class leaders can manage reminders and announcements for their
++      classes.
++- [ ] Verify admin role changes take effect after the next session refresh.
++- [ ] Verify H-7, H-3, H-1, and Hari H notifications on Android and iOS.
++- [ ] Verify notification rescheduling after reminder edit and cancellation
++      after completion/deletion.
++
++Firebase Cloud Messaging was not added because Firebase is not configured in
++the repository. Local notifications are fully implemented; push notification
++support requires Firebase project files, APNs/FCM credentials, token storage,
++and a trusted server or Edge Function.
++
++## 7. Pull Request Summary
++
++### Summary
++
++Add production RBAC and multi-role dashboards without replacing the existing
++Flutter architecture or Supabase tables.
++
++### Main changes
++
++- Add Admin, Lecturer, Class Leader, and Student role handling.
++- Add guarded routing and permission-aware UI actions.
++- Add typed domain models/services for class, course, schedule, announcement,
++  and reminder.
++- Add announcement CRUD and admin user-role management.
++- Extend reminders with target role, priority, status, creator, and centralized
++  deadline notifications.
++- Add Supabase migration with profiles, RLS, join RPC, and data backfills.
++
++### Validation
++
++- `flutter analyze`: passed with no issues.
++- `flutter test`: 4 tests passed.
++- `flutter build windows --debug`: passed.
++
++Validation used a clean temporary Flutter 3.38.6 source/cache because the
++machine's `D:\Flutter` installation contains corrupted framework source and Git
++pack files.
+diff --git a/README.md b/README.md
+index 5d00e0a..0e73ea7 100644
+--- a/README.md
++++ b/README.md
+@@ -19,7 +19,17 @@ Aplikasi mobile berbasis Flutter dan Supabase untuk mengelola reminder tugas kul
+ 
+ ## Catatan
+ 
+-Konfigurasi sensitif seperti Supabase URL dan API Key disimpan menggunakan environment variable (`.env`) dan tidak disertakan di repository.
++Konfigurasi Supabase diberikan saat build agar tidak dibundel sebagai asset:
++
++```bash
++flutter run \
++  --dart-define=SUPABASE_URL=https://your-project.supabase.co \
++  --dart-define=SUPABASE_ANON_KEY=your-anon-key
++```
++
++Gunakan `.env.example` sebagai referensi nama variabel. Firebase tidak
++dikonfigurasi pada repository ini; notifikasi yang aktif adalah local
++notification.
+ 
+ Repositori ini digunakan untuk keperluan pengembangan dan dokumentasi
+ tugas akhir perkuliahan Pemrograman Mobile
+diff --git a/lib/home_page.dart b/lib/home_page.dart
+index be833c6..c1666dc 100644
+--- a/lib/home_page.dart
++++ b/lib/home_page.dart
+@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
+ import 'package:supabase_flutter/supabase_flutter.dart';
+ import 'package:flutter_easyloading/flutter_easyloading.dart';
+ 
++import 'models/user_role.dart';
++import 'services/auth_service.dart';
++import 'services/class_service.dart';
++
+ class HomePage extends StatefulWidget {
+   const HomePage({super.key});
+ 
+@@ -11,6 +15,7 @@ class HomePage extends StatefulWidget {
+ 
+ class _HomePageState extends State<HomePage> {
+   final _currentUser = Supabase.instance.client.auth.currentUser;
++  final _classService = ClassService();
+   List myClasses = [];
+   bool _isLoading = true;
+ 
+@@ -29,11 +34,9 @@ class _HomePageState extends State<HomePage> {
+ 
+   Future<void> _fetchMyClasses() async {
+     try {
+-      final response = await Supabase.instance.client
+-          .from('anggota_kelas')
+-          .select('role, kelas(*)')
+-          .eq('user_email', _currentUser!.email!)
+-          .order('created_at', ascending: false);
++      final response = await _classService.fetchClassCards(
++        role: AuthService.instance.currentRole,
++      );
+ 
+       if (mounted) {
+         setState(() {
+@@ -49,8 +52,8 @@ class _HomePageState extends State<HomePage> {
+ 
+   Future<void> _joinClass(String code) async {
+     if (code.isEmpty) return;
+-    
+-    if(mounted) Navigator.pop(context);
++
++    if (mounted) Navigator.pop(context);
+ 
+     EasyLoading.show(
+       status: 'Verifikasi...',
+@@ -58,51 +61,13 @@ class _HomePageState extends State<HomePage> {
+     );
+ 
+     try {
+-      final response = await Supabase.instance.client
+-          .from('kelas')
+-          .select()
+-          .or('kode_kelas.eq.$code,kode_wakil.eq.$code')
+-          .maybeSingle();
+-
+-      if (response != null) {
+-        if (response['is_open'] == false) {
+-          EasyLoading.showError('Kelas ditutup.');
+-          return;
+-        }
+-
+-        final existingMember = await Supabase.instance.client
+-            .from('anggota_kelas')
+-            .select()
+-            .eq('kelas_id', response['id'])
+-            .eq('user_email', _currentUser!.email!)
+-            .maybeSingle();
+-
+-        if (existingMember != null) {
+-          EasyLoading.showInfo('Sudah bergabung!');
+-          return;
+-        }
+-
+-        String role = 'Mahasiswa';
+-        if (code == response['kode_wakil']) {
+-          role = 'Wakil Ketua Kelas';
+-        }
+-
+-        final metadata = _currentUser.userMetadata;
+-        await Supabase.instance.client.from('anggota_kelas').insert({
+-          'user_email': _currentUser.email,
+-          'kelas_id': response['id'],
+-          'role': role,
+-          'user_name': metadata?['name'] ?? 'Mahasiswa',
+-          'nim': metadata?['nim'] ?? '-',
+-        });
+-
+-        EasyLoading.showSuccess('Berhasil!');
+-        _fetchMyClasses();
+-      } else {
+-        EasyLoading.showError('Kode salah');
+-      }
++      await _classService.joinByCode(code);
++      await AuthService.instance.refreshSession();
++      EasyLoading.showSuccess('Berhasil bergabung!');
++      _fetchMyClasses();
+     } catch (e) {
+-      EasyLoading.showError('Gagal bergabung');
++      final message = e.toString().replaceFirst('Exception: ', '');
++      EasyLoading.showError('Gagal bergabung: $message');
+     } finally {
+       EasyLoading.dismiss();
+     }
+@@ -224,14 +189,11 @@ class _HomePageState extends State<HomePage> {
+                   ),
+                   child: const Text(
+                     'Gabung Kelas',
+-                    style: TextStyle(
+-                      fontSize: 16,
+-                      fontWeight: FontWeight.bold,
+-                    ),
++                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                   ),
+                 ),
+               ),
+-              const SizedBox(height: 40), 
++              const SizedBox(height: 40),
+             ],
+           ),
+         ),
+@@ -256,10 +218,7 @@ class _HomePageState extends State<HomePage> {
+         ),
+         actions: [
+           TextButton(
+-            child: Text(
+-              "Batal",
+-              style: TextStyle(color: Colors.grey[600]),
+-            ),
++            child: Text("Batal", style: TextStyle(color: Colors.grey[600])),
+             onPressed: () => Navigator.pop(dialogContext),
+           ),
+           TextButton(
+@@ -269,14 +228,11 @@ class _HomePageState extends State<HomePage> {
+             ),
+             child: const Text(
+               "Keluar",
+-              style: TextStyle(
+-                color: Colors.red,
+-                fontWeight: FontWeight.bold,
+-              ),
++              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+             ),
+             onPressed: () async {
+               Navigator.pop(dialogContext);
+-              await Supabase.instance.client.auth.signOut();
++              await AuthService.instance.signOut();
+               if (mounted) Navigator.pushReplacementNamed(context, '/login');
+             },
+           ),
+@@ -287,8 +243,29 @@ class _HomePageState extends State<HomePage> {
+ 
+   String _getDateString() {
+     final now = DateTime.now();
+-    const months = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+-    const days = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
++    const months = [
++      'Jan',
++      'Feb',
++      'Mar',
++      'Apr',
++      'Mei',
++      'Jun',
++      'Jul',
++      'Agu',
++      'Sep',
++      'Okt',
++      'Nov',
++      'Des',
++    ];
++    const days = [
++      'Minggu',
++      'Senin',
++      'Selasa',
++      'Rabu',
++      'Kamis',
++      'Jumat',
++      'Sabtu',
++    ];
+     return '${days[now.weekday == 7 ? 0 : now.weekday]}, ${now.day} ${months[now.month - 1]}';
+   }
+ 
+@@ -335,8 +312,10 @@ class _HomePageState extends State<HomePage> {
+             borderRadius: BorderRadius.circular(100),
+           ),
+           icon: const Icon(Icons.add, color: Colors.white),
+-          label: const Text(
+-            "Buat / Gabung",
++          label: Text(
++            AuthService.instance.hasPermission(AppPermission.manageClasses)
++                ? "Buat / Gabung"
++                : "Gabung Kelas",
+             style: TextStyle(
+               color: Colors.white,
+               fontWeight: FontWeight.w600,
+@@ -379,21 +358,25 @@ class _HomePageState extends State<HomePage> {
+                   borderRadius: BorderRadius.circular(2),
+                 ),
+               ),
+-              _buildActionTile(
+-                icon: Icons.add_box_rounded,
+-                color: Colors.orange[600]!,
+-                title: 'Buat Kelas Baru',
+-                subtitle: 'Untuk Dosen / Ketua Kelas',
+-                onTap: () async {
+-                  Navigator.pop(context);
+-                  await Navigator.pushNamed(context, '/create-class');
+-                  _fetchMyClasses();
+-                },
+-              ),
+-              Padding(
+-                padding: const EdgeInsets.symmetric(horizontal: 24),
+-                child: Divider(color: Colors.grey[100], height: 1),
+-              ),
++              if (AuthService.instance.hasPermission(
++                AppPermission.manageClasses,
++              )) ...[
++                _buildActionTile(
++                  icon: Icons.add_box_rounded,
++                  color: Colors.orange[600]!,
++                  title: 'Buat Kelas Baru',
++                  subtitle: 'Untuk Admin, Dosen, atau Ketua Kelas',
++                  onTap: () async {
++                    Navigator.pop(context);
++                    await Navigator.pushNamed(context, '/create-class');
++                    _fetchMyClasses();
++                  },
++                ),
++                Padding(
++                  padding: const EdgeInsets.symmetric(horizontal: 24),
++                  child: Divider(color: Colors.grey[100], height: 1),
++                ),
++              ],
+               _buildActionTile(
+                 icon: Icons.login_rounded,
+                 color: _primaryColor,
+@@ -544,8 +527,9 @@ class _HomePageState extends State<HomePage> {
+             child: CircleAvatar(
+               radius: 18,
+               backgroundColor: Colors.grey[100],
+-              backgroundImage:
+-                  avatarUrl != null ? NetworkImage(avatarUrl) : null,
++              backgroundImage: avatarUrl != null
++                  ? NetworkImage(avatarUrl)
++                  : null,
+               child: avatarUrl == null
+                   ? Icon(Icons.person, color: Colors.grey[400])
+                   : null,
+@@ -555,7 +539,12 @@ class _HomePageState extends State<HomePage> {
+       ],
+       leading: IconButton(
+         icon: Icon(Icons.dashboard_rounded, color: _secondaryColor),
+-        onPressed: _handleLogout,
++        tooltip: 'Dashboard',
++        onPressed: () => Navigator.pushNamedAndRemoveUntil(
++          context,
++          AuthService.instance.dashboardRoute(),
++          (route) => false,
++        ),
+       ),
+     );
+   }
+@@ -647,14 +636,15 @@ class _FadeInUpState extends State<_FadeInUp>
+       duration: const Duration(milliseconds: 400),
+     );
+ 
+-    _opacity = Tween<double>(begin: 0, end: 1).animate(
+-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+-    );
++    _opacity = Tween<double>(
++      begin: 0,
++      end: 1,
++    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+ 
+-    _translate =
+-        Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero).animate(
+-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+-    );
++    _translate = Tween<Offset>(
++      begin: const Offset(0, 0.1),
++      end: Offset.zero,
++    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+ 
+     Future.delayed(widget.delay, () {
+       if (mounted) _controller.forward();
+@@ -671,10 +661,7 @@ class _FadeInUpState extends State<_FadeInUp>
+   Widget build(BuildContext context) {
+     return FadeTransition(
+       opacity: _opacity,
+-      child: SlideTransition(
+-        position: _translate,
+-        child: widget.child,
+-      ),
++      child: SlideTransition(position: _translate, child: widget.child),
+     );
+   }
+ }
+@@ -689,15 +676,20 @@ class _ClassCard extends StatelessWidget {
+   Widget build(BuildContext context) {
+     final kelas = item['kelas'];
+     final role = item['role'];
++    final parsedRole = UserRole.fromValue(role);
+     final bool isAdmin =
+-        role == 'admin' || role == 'Ketua Kelas' || role == 'Wakil Ketua Kelas';
++        parsedRole == UserRole.admin ||
++        parsedRole == UserRole.lecturer ||
++        PermissionPolicy.isClassLeader(role);
+     final String className = kelas['nama_kelas'] ?? 'Tanpa Nama';
+-    final String firstChar =
+-        className.isNotEmpty ? className[0].toUpperCase() : '#';
++    final String firstChar = className.isNotEmpty
++        ? className[0].toUpperCase()
++        : '#';
+ 
+     final isDarker = isAdmin;
+-    final iconBgColor =
+-        isDarker ? const Color(0xFFFFF7ED) : const Color(0xFFEFF6FF);
++    final iconBgColor = isDarker
++        ? const Color(0xFFFFF7ED)
++        : const Color(0xFFEFF6FF);
+     final iconColor = isDarker ? Colors.orange[700] : primaryColor;
+ 
+     return Container(
+@@ -775,7 +767,7 @@ class _ClassCard extends StatelessWidget {
+                       Row(
+                         children: [
+                           _buildAestheticBadge(
+-                            label: isAdmin ? "Ketua Kelas" : "Mahasiswa",
++                            label: parsedRole.label,
+                             color: isAdmin ? Colors.orange : primaryColor,
+                           ),
+                         ],
+@@ -815,4 +807,4 @@ class _ClassCard extends StatelessWidget {
+       ),
+     );
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/login_page.dart b/lib/login_page.dart
+index 3099f09..ef4d3ed 100644
+--- a/lib/login_page.dart
++++ b/lib/login_page.dart
+@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
+ import 'package:flutter_easyloading/flutter_easyloading.dart';
+ import 'package:supabase_flutter/supabase_flutter.dart';
+ 
++import 'services/auth_service.dart';
++
+ class LoginPage extends StatefulWidget {
+-  const LoginPage({Key? key}) : super(key: key);
++  const LoginPage({super.key});
+ 
+   @override
+   _LoginPageState createState() => _LoginPageState();
+@@ -20,6 +22,13 @@ class _LoginPageState extends State<LoginPage> {
+   // Warna Tema (Bisa diganti sesuai brand)
+   final Color _primaryColor = const Color(0xFF2563EB); // Modern Blue
+ 
++  @override
++  void dispose() {
++    _emailController.dispose();
++    _passwordController.dispose();
++    super.dispose();
++  }
++
+   @override
+   Widget build(BuildContext context) {
+     // Mendapatkan ukuran layar untuk responsivitas sederhana
+@@ -130,20 +139,22 @@ class _LoginPageState extends State<LoginPage> {
+                         return null;
+                       },
+                     ),
+-                    
++
+                     // Lupa Password (Opsional)
+                     Align(
+                       alignment: Alignment.centerRight,
+                       child: TextButton(
+-                        onPressed: () {
+-                        },
++                        onPressed: () {},
+                         child: Text(
+                           "Lupa Password?",
+-                          style: TextStyle(color: _primaryColor, fontWeight: FontWeight.w600),
++                          style: TextStyle(
++                            color: _primaryColor,
++                            fontWeight: FontWeight.w600,
++                          ),
+                         ),
+                       ),
+                     ),
+-                    
++
+                     const SizedBox(height: 24),
+ 
+                     SizedBox(
+@@ -256,31 +267,32 @@ class _LoginPageState extends State<LoginPage> {
+     if (_formKey.currentState!.validate()) {
+       EasyLoading.show(status: 'Sedang memuat...');
+       final supabase = Supabase.instance.client;
+-      
++
+       try {
+         await supabase.auth.signInWithPassword(
+           email: _emailController.text.trim(),
+           password: _passwordController.text,
+         );
+-        
++        final appUser = await AuthService.instance.refreshSession();
++
+         EasyLoading.dismiss();
+-        
++
+         if (mounted) {
+-           Navigator.pushNamedAndRemoveUntil(
+-             context, 
+-             '/home', 
+-             (route) => false
+-           );
++          Navigator.pushNamedAndRemoveUntil(
++            context,
++            AuthService.instance.dashboardRoute(appUser?.role),
++            (route) => false,
++          );
+         }
+       } catch (e) {
+         EasyLoading.dismiss();
+         String errorMessage = "Gagal login. Periksa email/password.";
+         if (e.toString().contains("Invalid login credentials")) {
+-           errorMessage = "Email atau password salah.";
++          errorMessage = "Email atau password salah.";
+         }
+-        
++
+         EasyLoading.showError(errorMessage);
+       }
+     }
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/main.dart b/lib/main.dart
+index 7130c32..3d9c399 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -1,36 +1,23 @@
+ import 'package:flutter/material.dart';
+-import 'package:reminderkita/pages/subject_management_page.dart';
+ import 'package:supabase_flutter/supabase_flutter.dart';
+ import 'package:flutter_easyloading/flutter_easyloading.dart';
+ import 'package:intl/date_symbol_data_local.dart';
+ import 'package:flutter_localizations/flutter_localizations.dart';
+-import 'package:flutter_dotenv/flutter_dotenv.dart';
+ 
+-// Pages
+-import 'login_page.dart';
+-import 'register_page.dart';
+-import 'home_page.dart';
+-import './pages/create_class_page.dart';
+-import './pages/class_board_page.dart';
+-import './pages/task_form_page.dart';
+-import './pages/schedule_page.dart';
+-import './pages/profile_page.dart';
+-
+-// Service (Make sure you created this file based on the previous step)
++import 'pages/auth_gate.dart';
++import 'routing/app_router.dart';
++import 'routing/navigation.dart';
+ import './services/notification_service.dart';
+ 
+-// Global Key for Navigation (Used by NotificationService)
+-final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+-
+ Future<void> main() async {
+   WidgetsFlutterBinding.ensureInitialized();
+ 
+-  await dotenv.load(fileName: ".env");
+-
+-  await Supabase.initialize(
+-    url: dotenv.env['SUPABASE_URL']!,
+-    anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
+-  );
++  const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
++  const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
++  if (supabaseUrl.isEmpty || supabaseAnonKey.isEmpty) {
++    throw StateError('SUPABASE_URL dan SUPABASE_ANON_KEY wajib dikonfigurasi.');
++  }
++  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+ 
+   await initializeDateFormatting('id_ID', null);
+ 
+@@ -50,9 +37,9 @@ class MainApp extends StatelessWidget {
+   Widget build(BuildContext context) {
+     return MaterialApp(
+       // --- IMPORTANT: Connect the key here ---
+-      navigatorKey: navigatorKey, 
++      navigatorKey: navigatorKey,
++
+       // ---------------------------------------
+-      
+       debugShowCheckedModeBanner: false,
+       title: 'ReminderKita',
+ 
+@@ -84,24 +71,10 @@ class MainApp extends StatelessWidget {
+         ),
+       ),
+ 
+-      // Check Session
+-      home: Supabase.instance.client.auth.currentUser == null
+-          ? const LoginPage()
+-          : const HomePage(),
+-
+-      routes: {
+-        '/login': (context) => const LoginPage(),
+-        '/register': (context) => const RegisterPage(),
+-        '/home': (context) => const HomePage(),
+-        '/create-class': (context) => const CreateClassPage(),
+-        '/class-board': (context) => const ClassBoardPage(),
+-        '/task-form': (context) => const TaskFormPage(),
+-        '/schedule': (context) => const SchedulePage(),
+-        '/profile': (context) => const ProfilePage(),
+-        '/manage-subjects': (context) => const SubjectManagementPage()
+-      },
++      home: const AuthGate(),
++      onGenerateRoute: AppRouter.onGenerateRoute,
+ 
+       builder: EasyLoading.init(),
+     );
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/models/announcement.dart b/lib/models/announcement.dart
+new file mode 100644
+index 0000000..dafaa43
+--- /dev/null
++++ b/lib/models/announcement.dart
+@@ -0,0 +1,50 @@
++import 'user_role.dart';
++
++class Announcement {
++  const Announcement({
++    required this.id,
++    required this.title,
++    required this.content,
++    required this.createdBy,
++    required this.createdAt,
++    this.targetClass,
++    this.targetRole,
++    this.authorName,
++  });
++
++  final int id;
++  final String title;
++  final String content;
++  final String createdBy;
++  final DateTime createdAt;
++  final int? targetClass;
++  final UserRole? targetRole;
++  final String? authorName;
++
++  factory Announcement.fromMap(Map<String, dynamic> map) {
++    final rawRole = map['target_role'];
++    final profile = map['profiles'];
++    return Announcement(
++      id: map['id'] as int,
++      title: map['title']?.toString() ?? '',
++      content: map['content']?.toString() ?? '',
++      createdBy: map['created_by']?.toString() ?? '',
++      createdAt:
++          DateTime.tryParse(map['created_at']?.toString() ?? '') ??
++          DateTime.now(),
++      targetClass: map['target_class'] as int?,
++      targetRole: rawRole == null ? null : UserRole.fromValue(rawRole),
++      authorName: profile is Map
++          ? profile['display_name']?.toString()
++          : map['author_name']?.toString(),
++    );
++  }
++
++  Map<String, dynamic> toMap() => {
++    'title': title,
++    'content': content,
++    'created_by': createdBy,
++    'target_class': targetClass,
++    'target_role': targetRole?.value,
++  };
++}
+diff --git a/lib/models/app_user.dart b/lib/models/app_user.dart
+new file mode 100644
+index 0000000..fd4a02f
+--- /dev/null
++++ b/lib/models/app_user.dart
+@@ -0,0 +1,34 @@
++import 'user_role.dart';
++
++class AppUser {
++  const AppUser({
++    required this.id,
++    required this.email,
++    required this.displayName,
++    required this.role,
++    this.studentNumber,
++    this.avatarUrl,
++  });
++
++  final String id;
++  final String email;
++  final String displayName;
++  final UserRole role;
++  final String? studentNumber;
++  final String? avatarUrl;
++
++  factory AppUser.fromMap(Map<String, dynamic> map) {
++    return AppUser(
++      id: map['id']?.toString() ?? '',
++      email: map['email']?.toString() ?? '',
++      displayName:
++          map['display_name']?.toString() ??
++          map['name']?.toString() ??
++          'Pengguna',
++      role: UserRole.fromValue(map['role']),
++      studentNumber:
++          map['student_number']?.toString() ?? map['nim']?.toString(),
++      avatarUrl: map['avatar_url']?.toString(),
++    );
++  }
++}
+diff --git a/lib/models/class_model.dart b/lib/models/class_model.dart
+new file mode 100644
+index 0000000..f5fc86c
+--- /dev/null
++++ b/lib/models/class_model.dart
+@@ -0,0 +1,28 @@
++class ClassModel {
++  const ClassModel({
++    required this.id,
++    required this.name,
++    required this.code,
++    required this.createdBy,
++    this.viceCode,
++    this.isOpen = true,
++  });
++
++  final int id;
++  final String name;
++  final String code;
++  final String createdBy;
++  final String? viceCode;
++  final bool isOpen;
++
++  factory ClassModel.fromMap(Map<String, dynamic> map) {
++    return ClassModel(
++      id: map['id'] as int,
++      name: map['nama_kelas']?.toString() ?? '',
++      code: map['kode_kelas']?.toString() ?? '',
++      viceCode: map['kode_wakil']?.toString(),
++      createdBy: map['created_by']?.toString() ?? '',
++      isOpen: map['is_open'] as bool? ?? true,
++    );
++  }
++}
+diff --git a/lib/models/class_schedule.dart b/lib/models/class_schedule.dart
+new file mode 100644
+index 0000000..e206cc0
+--- /dev/null
++++ b/lib/models/class_schedule.dart
+@@ -0,0 +1,40 @@
++class ClassSchedule {
++  const ClassSchedule({
++    required this.id,
++    required this.classId,
++    required this.courseId,
++    required this.day,
++    required this.startTime,
++    required this.endTime,
++    required this.room,
++  });
++
++  final int id;
++  final int classId;
++  final int courseId;
++  final String day;
++  final String startTime;
++  final String endTime;
++  final String room;
++
++  factory ClassSchedule.fromMap(Map<String, dynamic> map) {
++    return ClassSchedule(
++      id: map['id'] as int,
++      classId: map['kelas_id'] as int,
++      courseId: map['matakuliah_id'] as int,
++      day: map['hari']?.toString() ?? '',
++      startTime: map['jam_mulai']?.toString() ?? '',
++      endTime: map['jam_selesai']?.toString() ?? '',
++      room: map['ruangan']?.toString() ?? '',
++    );
++  }
++
++  Map<String, dynamic> toMap() => {
++    'kelas_id': classId,
++    'matakuliah_id': courseId,
++    'hari': day,
++    'jam_mulai': startTime,
++    'jam_selesai': endTime,
++    'ruangan': room,
++  };
++}
+diff --git a/lib/models/course.dart b/lib/models/course.dart
+new file mode 100644
+index 0000000..26996d2
+--- /dev/null
++++ b/lib/models/course.dart
+@@ -0,0 +1,32 @@
++class Course {
++  const Course({
++    required this.id,
++    required this.classId,
++    required this.name,
++    required this.lecturerName,
++    this.lecturerId,
++  });
++
++  final int id;
++  final int classId;
++  final String name;
++  final String lecturerName;
++  final String? lecturerId;
++
++  factory Course.fromMap(Map<String, dynamic> map) {
++    return Course(
++      id: map['id'] as int,
++      classId: map['kelas_id'] as int,
++      name: map['nama']?.toString() ?? '',
++      lecturerName: map['dosen']?.toString() ?? '',
++      lecturerId: map['lecturer_id']?.toString(),
++    );
++  }
++
++  Map<String, dynamic> toMap() => {
++    'kelas_id': classId,
++    'nama': name,
++    'dosen': lecturerName,
++    'lecturer_id': lecturerId,
++  };
++}
+diff --git a/lib/models/reminder.dart b/lib/models/reminder.dart
+new file mode 100644
+index 0000000..3e550c0
+--- /dev/null
++++ b/lib/models/reminder.dart
+@@ -0,0 +1,122 @@
++import 'user_role.dart';
++
++enum ReminderPriority {
++  low,
++  medium,
++  high,
++  urgent;
++
++  String get label => switch (this) {
++    ReminderPriority.low => 'Rendah',
++    ReminderPriority.medium => 'Sedang',
++    ReminderPriority.high => 'Tinggi',
++    ReminderPriority.urgent => 'Mendesak',
++  };
++
++  static ReminderPriority fromValue(Object? value) {
++    return ReminderPriority.values.firstWhere(
++      (priority) => priority.name == value?.toString().toLowerCase(),
++      orElse: () => ReminderPriority.medium,
++    );
++  }
++}
++
++enum ReminderStatus {
++  pending,
++  completed,
++  expired;
++
++  String get label => switch (this) {
++    ReminderStatus.pending => 'Menunggu',
++    ReminderStatus.completed => 'Selesai',
++    ReminderStatus.expired => 'Kedaluwarsa',
++  };
++
++  static ReminderStatus fromValue(Object? value) {
++    return ReminderStatus.values.firstWhere(
++      (status) => status.name == value?.toString().toLowerCase(),
++      orElse: () => ReminderStatus.pending,
++    );
++  }
++}
++
++class Reminder {
++  const Reminder({
++    required this.id,
++    required this.title,
++    required this.description,
++    required this.createdBy,
++    required this.targetClass,
++    required this.dueDate,
++    required this.priority,
++    required this.status,
++    this.targetRole,
++    this.courseId,
++    this.courseName,
++    this.lecturerName,
++  });
++
++  final int id;
++  final String title;
++  final String description;
++  final String createdBy;
++  final int targetClass;
++  final UserRole? targetRole;
++  final DateTime dueDate;
++  final ReminderPriority priority;
++  final ReminderStatus status;
++  final int? courseId;
++  final String? courseName;
++  final String? lecturerName;
++
++  ReminderStatus get effectiveStatus {
++    if (status == ReminderStatus.pending && dueDate.isBefore(DateTime.now())) {
++      return ReminderStatus.expired;
++    }
++    return status;
++  }
++
++  factory Reminder.fromMap(Map<String, dynamic> map) {
++    final rawTargetRole = map['target_role'];
++    return Reminder(
++      id: map['id'] as int,
++      title: map['judul']?.toString() ?? map['title']?.toString() ?? '',
++      description:
++          map['deskripsi']?.toString() ?? map['description']?.toString() ?? '',
++      createdBy:
++          map['created_by']?.toString() ??
++          map['author_email']?.toString() ??
++          '',
++      targetClass: (map['kelas_id'] ?? map['target_class']) as int,
++      targetRole: rawTargetRole == null
++          ? null
++          : UserRole.fromValue(rawTargetRole),
++      dueDate:
++          DateTime.tryParse(
++            map['waktu_reminder']?.toString() ??
++                map['due_date']?.toString() ??
++                '',
++          ) ??
++          DateTime.now(),
++      priority: ReminderPriority.fromValue(map['priority']),
++      status: ReminderStatus.fromValue(map['status']),
++      courseId: map['matakuliah_id'] as int?,
++      courseName: map['mata_kuliah']?.toString(),
++      lecturerName: map['dosen_pengampu']?.toString(),
++    );
++  }
++
++  Map<String, dynamic> toMap() => {
++    'judul': title,
++    'deskripsi': description,
++    'created_by': createdBy,
++    'kelas_id': targetClass,
++    'target_role': targetRole?.value,
++    'waktu_reminder': dueDate.toIso8601String(),
++    'priority': priority.name,
++    'status': status.name,
++    'matakuliah_id': courseId,
++    'mata_kuliah': courseName,
++    'dosen_pengampu': lecturerName,
++  };
++}
+diff --git a/lib/models/user_role.dart b/lib/models/user_role.dart
+new file mode 100644
+index 0000000..6b6439b
+--- /dev/null
++++ b/lib/models/user_role.dart
+@@ -0,0 +1,97 @@
++enum UserRole {
++  admin,
++  lecturer,
++  classLeader,
++  student;
++
++  String get value => switch (this) {
++    UserRole.admin => 'admin',
++    UserRole.lecturer => 'lecturer',
++    UserRole.classLeader => 'class_leader',
++    UserRole.student => 'student',
++  };
++
++  String get label => switch (this) {
++    UserRole.admin => 'Admin',
++    UserRole.lecturer => 'Dosen',
++    UserRole.classLeader => 'Ketua Kelas',
++    UserRole.student => 'Mahasiswa',
++  };
++
++  static UserRole fromValue(Object? value) {
++    final normalized = value?.toString().trim().toLowerCase();
++    return switch (normalized) {
++      'admin' => UserRole.admin,
++      'lecturer' || 'dosen' => UserRole.lecturer,
++      'class_leader' ||
++      'classleader' ||
++      'ketua kelas' ||
++      'ketua' ||
++      'wakil ketua kelas' ||
++      'vice_admin' => UserRole.classLeader,
++      _ => UserRole.student,
++    };
++  }
++}
++
++enum AppPermission {
++  manageUsers,
++  manageClasses,
++  manageCourses,
++  manageReminders,
++  manageAnnouncements,
++  manageSchedules,
++  viewClasses,
++  viewReminders,
++  viewAnnouncements,
++  viewSchedules,
++  viewMembers,
++  viewStatistics,
++}
++
++abstract final class PermissionPolicy {
++  static final Map<UserRole, Set<AppPermission>> _permissions = {
++    UserRole.admin: AppPermission.values.toSet(),
++    UserRole.lecturer: {
++      AppPermission.manageClasses,
++      AppPermission.manageCourses,
++      AppPermission.manageReminders,
++      AppPermission.manageAnnouncements,
++      AppPermission.manageSchedules,
++      AppPermission.viewClasses,
++      AppPermission.viewReminders,
++      AppPermission.viewAnnouncements,
++      AppPermission.viewSchedules,
++      AppPermission.viewMembers,
++    },
++    UserRole.classLeader: {
++      AppPermission.manageReminders,
++      AppPermission.manageAnnouncements,
++      AppPermission.viewClasses,
++      AppPermission.viewReminders,
++      AppPermission.viewAnnouncements,
++      AppPermission.viewSchedules,
++      AppPermission.viewMembers,
++    },
++    UserRole.student: {
++      AppPermission.viewClasses,
++      AppPermission.viewReminders,
++      AppPermission.viewAnnouncements,
++      AppPermission.viewSchedules,
++    },
++  };
++
++  static bool allows(UserRole role, AppPermission permission) {
++    return _permissions[role]?.contains(permission) ?? false;
++  }
++
++  static bool isClassLeader(Object? role) {
++    final normalized = role?.toString().trim().toLowerCase();
++    return normalized == 'class_leader' ||
++        normalized == 'classleader' ||
++        normalized == 'ketua kelas' ||
++        normalized == 'ketua' ||
++        normalized == 'wakil ketua kelas' ||
++        normalized == 'vice_admin';
++  }
++}
+diff --git a/lib/pages/access_denied_page.dart b/lib/pages/access_denied_page.dart
+new file mode 100644
+index 0000000..ea58b28
+--- /dev/null
++++ b/lib/pages/access_denied_page.dart
+@@ -0,0 +1,53 @@
++import 'package:flutter/material.dart';
++
++import '../services/auth_service.dart';
++
++class AccessDeniedPage extends StatelessWidget {
++  const AccessDeniedPage({
++    super.key,
++    this.message = 'Anda tidak memiliki akses ke halaman ini.',
++  });
++
++  final String message;
++
++  @override
++  Widget build(BuildContext context) {
++    return Scaffold(
++      body: Center(
++        child: Padding(
++          padding: const EdgeInsets.all(32),
++          child: Column(
++            mainAxisSize: MainAxisSize.min,
++            children: [
++              const Icon(
++                Icons.lock_outline_rounded,
++                size: 72,
++                color: Color(0xFF2563EB),
++              ),
++              const SizedBox(height: 20),
++              const Text(
++                'Akses Ditolak',
++                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
++              ),
++              const SizedBox(height: 8),
++              Text(
++                message,
++                textAlign: TextAlign.center,
++                style: TextStyle(color: Colors.grey[600]),
++              ),
++              const SizedBox(height: 24),
++              ElevatedButton(
++                onPressed: () => Navigator.pushNamedAndRemoveUntil(
++                  context,
++                  AuthService.instance.dashboardRoute(),
++                  (_) => false,
++                ),
++                child: const Text('Kembali ke Dashboard'),
++              ),
++            ],
++          ),
++        ),
++      ),
++    );
++  }
++}
+diff --git a/lib/pages/announcement_page.dart b/lib/pages/announcement_page.dart
+new file mode 100644
+index 0000000..9f017b6
+--- /dev/null
++++ b/lib/pages/announcement_page.dart
+@@ -0,0 +1,325 @@
++import 'package:flutter/material.dart';
++import 'package:flutter_easyloading/flutter_easyloading.dart';
++import 'package:intl/intl.dart';
++
++import '../models/announcement.dart';
++import '../models/class_model.dart';
++import '../models/user_role.dart';
++import '../services/announcement_service.dart';
++import '../services/auth_service.dart';
++import '../services/class_service.dart';
++
++class AnnouncementPage extends StatefulWidget {
++  const AnnouncementPage({super.key});
++
++  @override
++  State<AnnouncementPage> createState() => _AnnouncementPageState();
++}
++
++class _AnnouncementPageState extends State<AnnouncementPage> {
++  final _service = AnnouncementService();
++  final _classService = ClassService();
++
++  List<Announcement> _announcements = [];
++  List<ClassModel> _classes = [];
++  bool _loading = true;
++
++  bool get _canManage =>
++      AuthService.instance.hasPermission(AppPermission.manageAnnouncements);
++
++  @override
++  void initState() {
++    super.initState();
++    _load();
++  }
++
++  Future<void> _load() async {
++    setState(() => _loading = true);
++    try {
++      final results = await Future.wait([
++        _service.fetchVisible(),
++        _classService.fetchAccessibleClasses(AuthService.instance.currentRole),
++      ]);
++      if (!mounted) return;
++      setState(() {
++        _announcements = results[0] as List<Announcement>;
++        _classes = results[1] as List<ClassModel>;
++        _loading = false;
++      });
++    } catch (error) {
++      if (!mounted) return;
++      setState(() => _loading = false);
++      EasyLoading.showError('Gagal memuat pengumuman: $error');
++    }
++  }
++
++  Future<void> _showForm([Announcement? announcement]) async {
++    final titleController = TextEditingController(text: announcement?.title);
++    final contentController = TextEditingController(
++      text: announcement?.content,
++    );
++    int? targetClass = announcement?.targetClass;
++    UserRole? targetRole = announcement?.targetRole;
++    final role = AuthService.instance.currentRole;
++
++    if (role == UserRole.classLeader && targetClass == null) {
++      targetClass = _classes.isEmpty ? null : _classes.first.id;
++    }
++
++    final saved = await showDialog<bool>(
++      context: context,
++      builder: (dialogContext) {
++        return StatefulBuilder(
++          builder: (context, setDialogState) {
++            return AlertDialog(
++              title: Text(
++                announcement == null ? 'Pengumuman Baru' : 'Edit Pengumuman',
++              ),
++              content: SizedBox(
++                width: 520,
++                child: SingleChildScrollView(
++                  child: Column(
++                    mainAxisSize: MainAxisSize.min,
++                    children: [
++                      TextField(
++                        controller: titleController,
++                        decoration: const InputDecoration(labelText: 'Judul'),
++                      ),
++                      const SizedBox(height: 12),
++                      TextField(
++                        controller: contentController,
++                        minLines: 4,
++                        maxLines: 8,
++                        decoration: const InputDecoration(labelText: 'Isi'),
++                      ),
++                      const SizedBox(height: 12),
++                      DropdownButtonFormField<int?>(
++                        initialValue: targetClass,
++                        decoration: const InputDecoration(
++                          labelText: 'Target kelas',
++                        ),
++                        items: [
++                          if (role != UserRole.classLeader)
++                            const DropdownMenuItem<int?>(
++                              value: null,
++                              child: Text('Semua kelas'),
++                            ),
++                          ..._classes.map(
++                            (item) => DropdownMenuItem<int?>(
++                              value: item.id,
++                              child: Text(item.name),
++                            ),
++                          ),
++                        ],
++                        onChanged: (value) =>
++                            setDialogState(() => targetClass = value),
++                      ),
++                      const SizedBox(height: 12),
++                      DropdownButtonFormField<UserRole?>(
++                        initialValue: targetRole,
++                        decoration: const InputDecoration(
++                          labelText: 'Target role',
++                        ),
++                        items: [
++                          const DropdownMenuItem<UserRole?>(
++                            value: null,
++                            child: Text('Semua role'),
++                          ),
++                          ...UserRole.values.map(
++                            (item) => DropdownMenuItem<UserRole?>(
++                              value: item,
++                              child: Text(item.label),
++                            ),
++                          ),
++                        ],
++                        onChanged: (value) =>
++                            setDialogState(() => targetRole = value),
++                      ),
++                    ],
++                  ),
++                ),
++              ),
++              actions: [
++                TextButton(
++                  onPressed: () => Navigator.pop(dialogContext, false),
++                  child: const Text('Batal'),
++                ),
++                ElevatedButton(
++                  onPressed: () {
++                    if (titleController.text.trim().isEmpty ||
++                        contentController.text.trim().isEmpty) {
++                      EasyLoading.showError('Judul dan isi wajib diisi.');
++                      return;
++                    }
++                    if (role == UserRole.classLeader && targetClass == null) {
++                      EasyLoading.showError('Pilih target kelas.');
++                      return;
++                    }
++                    Navigator.pop(dialogContext, true);
++                  },
++                  child: const Text('Simpan'),
++                ),
++              ],
++            );
++          },
++        );
++      },
++    );
++
++    if (saved != true) {
++      titleController.dispose();
++      contentController.dispose();
++      return;
++    }
++
++    try {
++      EasyLoading.show(status: 'Menyimpan...');
++      final value = Announcement(
++        id: announcement?.id ?? 0,
++        title: titleController.text.trim(),
++        content: contentController.text.trim(),
++        createdBy:
++            announcement?.createdBy ?? AuthService.instance.currentUser!.id,
++        createdAt: announcement?.createdAt ?? DateTime.now(),
++        targetClass: targetClass,
++        targetRole: targetRole,
++      );
++      if (announcement == null) {
++        await _service.create(value);
++      } else {
++        await _service.update(value);
++      }
++      await _load();
++      EasyLoading.showSuccess('Pengumuman disimpan');
++    } catch (error) {
++      EasyLoading.showError('Gagal menyimpan: $error');
++    } finally {
++      titleController.dispose();
++      contentController.dispose();
++    }
++  }
++
++  Future<void> _delete(Announcement announcement) async {
++    final confirmed = await showDialog<bool>(
++      context: context,
++      builder: (context) => AlertDialog(
++        title: const Text('Hapus Pengumuman'),
++        content: Text('Hapus "${announcement.title}"?'),
++        actions: [
++          TextButton(
++            onPressed: () => Navigator.pop(context, false),
++            child: const Text('Batal'),
++          ),
++          TextButton(
++            onPressed: () => Navigator.pop(context, true),
++            child: const Text('Hapus', style: TextStyle(color: Colors.red)),
++          ),
++        ],
++      ),
++    );
++    if (confirmed != true) return;
++    try {
++      await _service.delete(announcement.id);
++      await _load();
++    } catch (error) {
++      EasyLoading.showError('Gagal menghapus: $error');
++    }
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    return Scaffold(
++      appBar: AppBar(title: const Text('Pengumuman')),
++      body: _loading
++          ? const Center(child: CircularProgressIndicator())
++          : RefreshIndicator(
++              onRefresh: _load,
++              child: _announcements.isEmpty
++                  ? ListView(
++                      children: const [
++                        SizedBox(height: 180),
++                        Icon(Icons.campaign_outlined, size: 72),
++                        SizedBox(height: 16),
++                        Center(child: Text('Belum ada pengumuman')),
++                      ],
++                    )
++                  : ListView.separated(
++                      padding: const EdgeInsets.all(16),
++                      itemCount: _announcements.length,
++                      separatorBuilder: (_, _) => const SizedBox(height: 10),
++                      itemBuilder: (context, index) {
++                        final item = _announcements[index];
++                        final canChange =
++                            _canManage &&
++                            (AuthService.instance.currentRole ==
++                                    UserRole.admin ||
++                                item.createdBy ==
++                                    AuthService.instance.currentUser?.id);
++                        return Card(
++                          child: Padding(
++                            padding: const EdgeInsets.all(18),
++                            child: Column(
++                              crossAxisAlignment: CrossAxisAlignment.start,
++                              children: [
++                                Row(
++                                  crossAxisAlignment: CrossAxisAlignment.start,
++                                  children: [
++                                    Expanded(
++                                      child: Text(
++                                        item.title,
++                                        style: const TextStyle(
++                                          fontSize: 17,
++                                          fontWeight: FontWeight.w800,
++                                        ),
++                                      ),
++                                    ),
++                                    if (canChange)
++                                      PopupMenuButton<String>(
++                                        onSelected: (value) {
++                                          if (value == 'edit') {
++                                            _showForm(item);
++                                          } else {
++                                            _delete(item);
++                                          }
++                                        },
++                                        itemBuilder: (_) => const [
++                                          PopupMenuItem(
++                                            value: 'edit',
++                                            child: Text('Edit'),
++                                          ),
++                                          PopupMenuItem(
++                                            value: 'delete',
++                                            child: Text('Hapus'),
++                                          ),
++                                        ],
++                                      ),
++                                  ],
++                                ),
++                                const SizedBox(height: 8),
++                                Text(item.content),
++                                const SizedBox(height: 14),
++                                Text(
++                                  '${item.authorName ?? 'Pengguna'} - '
++                                  '${DateFormat('d MMM yyyy, HH:mm', 'id_ID').format(item.createdAt.toLocal())}',
++                                  style: TextStyle(
++                                    color: Colors.grey[600],
++                                    fontSize: 12,
++                                  ),
++                                ),
++                              ],
++                            ),
++                          ),
++                        );
++                      },
++                    ),
++            ),
++      floatingActionButton: _canManage
++          ? FloatingActionButton.extended(
++              onPressed: _showForm,
++              icon: const Icon(Icons.add_rounded),
++              label: const Text('Pengumuman'),
++            )
++          : null,
++    );
++  }
++}
+diff --git a/lib/pages/auth_gate.dart b/lib/pages/auth_gate.dart
+new file mode 100644
+index 0000000..4578564
+--- /dev/null
++++ b/lib/pages/auth_gate.dart
+@@ -0,0 +1,35 @@
++import 'package:flutter/material.dart';
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import '../services/auth_service.dart';
++
++class AuthGate extends StatefulWidget {
++  const AuthGate({super.key});
++
++  @override
++  State<AuthGate> createState() => _AuthGateState();
++}
++
++class _AuthGateState extends State<AuthGate> {
++  @override
++  void initState() {
++    super.initState();
++    _resolveSession();
++  }
++
++  Future<void> _resolveSession() async {
++    final hasSession = Supabase.instance.client.auth.currentUser != null;
++    String route = '/login';
++    if (hasSession) {
++      await AuthService.instance.refreshSession();
++      route = AuthService.instance.dashboardRoute();
++    }
++    if (!mounted) return;
++    Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    return const Scaffold(body: Center(child: CircularProgressIndicator()));
++  }
++}
+diff --git a/lib/pages/class_board_page.dart b/lib/pages/class_board_page.dart
+index b743159..dc03600 100644
+--- a/lib/pages/class_board_page.dart
++++ b/lib/pages/class_board_page.dart
+@@ -5,6 +5,11 @@ import 'package:intl/intl.dart';
+ import 'package:flutter/services.dart';
+ import 'dart:math';
+ 
++import '../models/reminder.dart';
++import '../models/user_role.dart';
++import '../services/auth_service.dart';
++import '../services/notification_service.dart';
++
+ class ClassBoardPage extends StatefulWidget {
+   const ClassBoardPage({super.key});
+ 
+@@ -29,6 +34,27 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+   final Color _bgColor = const Color(0xFFF8FAFC);
+   final Color _cardColor = Colors.white;
+ 
++  bool get _isLocalClassLeader => PermissionPolicy.isClassLeader(_userRole);
++
++  bool get _canManageReminders =>
++      AuthService.instance.hasPermission(AppPermission.manageReminders) ||
++      _isLocalClassLeader;
++
++  bool get _canManageCourses =>
++      AuthService.instance.hasPermission(AppPermission.manageCourses);
++
++  bool get _canViewMembers =>
++      AuthService.instance.hasPermission(AppPermission.viewMembers) ||
++      _isLocalClassLeader;
++
++  bool get _canEditMembers =>
++      AuthService.instance.currentRole == UserRole.admin || _isLocalClassLeader;
++
++  bool get _canManageClass =>
++      AuthService.instance.currentRole == UserRole.admin ||
++      AuthService.instance.currentRole == UserRole.lecturer ||
++      _isLocalClassLeader;
++
+   @override
+   void didChangeDependencies() {
+     super.didChangeDependencies();
+@@ -58,6 +84,16 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+           .eq('kelas_id', _classId)
+           .order('created_at', ascending: false);
+ 
++      for (final item in response) {
++        try {
++          await NotificationService.scheduleReminder(
++            Reminder.fromMap(Map<String, dynamic>.from(item)),
++          );
++        } catch (error) {
++          debugPrint('Gagal sinkronisasi notifikasi reminder: $error');
++        }
++      }
++
+       if (mounted) {
+         setState(() {
+           _tasks = List<Map<String, dynamic>>.from(response);
+@@ -104,6 +140,7 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+       await Supabase.instance.client.from('tasks').delete().match({
+         'id': taskId,
+       });
++      await NotificationService.cancelTaskNotifications(taskId);
+       EasyLoading.dismiss();
+ 
+       _fetchTasks();
+@@ -112,12 +149,7 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+ 
+   // --- LOGIKA KELUAR KELAS ---
+   Future<void> _handleExitClass() async {
+-    bool isAdmin =
+-        _userRole == 'admin' ||
+-        _userRole == 'Wakil Ketua Kelas' ||
+-        _userRole == 'Ketua Kelas';
+-
+-    if (!isAdmin) {
++    if (!_canManageClass) {
+       bool confirm =
+           await showDialog(
+             context: context,
+@@ -148,15 +180,15 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+ 
+       EasyLoading.show(status: 'Keluar...');
+       try {
+-      await Supabase.instance.client.from('anggota_kelas').delete().match({
+-        'kelas_id': _classId,
+-        'user_email': _currentUserEmail!,
+-      });
++        await Supabase.instance.client.from('anggota_kelas').delete().match({
++          'kelas_id': _classId,
++          'user_email': _currentUserEmail!,
++        });
+ 
+-      EasyLoading.showSuccess("Berhasil keluar!");
+-      if (mounted) {
+-        Navigator.popUntil(context, ModalRoute.withName('/home'));
+-      }
++        EasyLoading.showSuccess("Berhasil keluar!");
++        if (mounted) {
++          Navigator.popUntil(context, ModalRoute.withName('/home'));
++        }
+       } catch (e) {
+         EasyLoading.showError("Gagal keluar: $e");
+       }
+@@ -279,12 +311,7 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+       ).format(DateTime.parse(task['waktu_reminder']));
+     }
+ 
+-    bool isAuthor = task['author_email'] == _currentUserEmail;
+-    bool isAdmin =
+-        _userRole == 'admin' ||
+-        _userRole == 'vice_admin' ||
+-        _userRole == 'Ketua Kelas';
+-    bool canEditDelete = isAuthor || isAdmin;
++    final canEditDelete = _canManageReminders;
+ 
+     showModalBottomSheet(
+       context: context,
+@@ -460,16 +487,20 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+                         ),
+                         child: Row(
+                           children: [
+-                              CircleAvatar(
+-                                radius: 18,
+-                                backgroundColor: Colors.grey[200],
+-                                backgroundImage: task['author_avatar_url'] != null 
+-                                    ? NetworkImage(task['author_avatar_url']) 
+-                                    : null, // Use network image if available
+-                                child: task['author_avatar_url'] == null
+-                                    ? const Icon(Icons.person, color: Colors.grey, size: 20)
+-                                    : null,
+-                              ),
++                            CircleAvatar(
++                              radius: 18,
++                              backgroundColor: Colors.grey[200],
++                              backgroundImage: task['author_avatar_url'] != null
++                                  ? NetworkImage(task['author_avatar_url'])
++                                  : null, // Use network image if available
++                              child: task['author_avatar_url'] == null
++                                  ? const Icon(
++                                      Icons.person,
++                                      color: Colors.grey,
++                                      size: 20,
++                                    )
++                                  : null,
++                            ),
+                             const SizedBox(width: 12),
+                             Column(
+                               crossAxisAlignment: CrossAxisAlignment.start,
+@@ -506,11 +537,8 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+   }
+ 
+   void _showMemberList() {
+-    bool isAdmin =
+-        _userRole == 'admin' ||
+-        _userRole == 'vice_admin' ||
+-        _userRole == 'Ketua Kelas';
+-    bool isMainAdmin = _userRole == 'admin' || _userRole == 'Ketua Kelas';
++    final isAdmin = _canManageClass;
++    final isMainAdmin = _canManageClass;
+ 
+     showModalBottomSheet(
+       context: context,
+@@ -557,7 +585,7 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+                     const SizedBox(height: 20),
+ 
+                     // ADMIN CARD
+-                    if (isAdmin)
++                    if (_canManageCourses)
+                       ListTile(
+                         contentPadding: EdgeInsets.zero,
+                         leading: Container(
+@@ -737,11 +765,20 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+                                   m['user_email'] == _currentUserEmail;
+                               bool isVice = m['role'] == 'vice_admin';
+ 
+-                              final String? liveAvatar = Supabase.instance.client.auth.currentUser?.userMetadata?['avatar_url'];
+-                              final String? avatarUrl = isSelf ? (liveAvatar ?? m['avatar_url']) : m['avatar_url'];
+-                              
++                              final String? liveAvatar = Supabase
++                                  .instance
++                                  .client
++                                  .auth
++                                  .currentUser
++                                  ?.userMetadata?['avatar_url'];
++                              final String? avatarUrl = isSelf
++                                  ? (liveAvatar ?? m['avatar_url'])
++                                  : m['avatar_url'];
++
+                               // Pastikan string tidak kosong
+-                              final bool hasImage = avatarUrl != null && avatarUrl.toString().isNotEmpty;
++                              final bool hasImage =
++                                  avatarUrl != null &&
++                                  avatarUrl.toString().isNotEmpty;
+ 
+                               return ListTile(
+                                 contentPadding: const EdgeInsets.symmetric(
+@@ -755,19 +792,24 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+                                       : (isVice
+                                             ? Colors.purple[100]
+                                             : Colors.blue[100]),
+-                                  backgroundImage: hasImage ? NetworkImage(avatarUrl) : null,
+-                                        child: !hasImage
+-                                            ? Text(
+-                                                (m['user_name']?[0] ?? 'U').toUpperCase(),
+-                                                style: TextStyle(
+-                                                  fontWeight: FontWeight.bold,
+-                                                  color: isTargetAdmin
+-                                                      ? Colors.orange[800]
+-                                                      : (isVice ? Colors.purple[800] : Colors.blue[800]),
+-                                                ),
+-                                              )
+-                                            : null,
+-                                      ),
++                                  backgroundImage: hasImage
++                                      ? NetworkImage(avatarUrl)
++                                      : null,
++                                  child: !hasImage
++                                      ? Text(
++                                          (m['user_name']?[0] ?? 'U')
++                                              .toUpperCase(),
++                                          style: TextStyle(
++                                            fontWeight: FontWeight.bold,
++                                            color: isTargetAdmin
++                                                ? Colors.orange[800]
++                                                : (isVice
++                                                      ? Colors.purple[800]
++                                                      : Colors.blue[800]),
++                                          ),
++                                        )
++                                      : null,
++                                ),
+                                 title: Text(
+                                   m['user_name'] ?? 'No Name',
+                                   style: const TextStyle(
+@@ -777,12 +819,18 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+                                 subtitle: Text(
+                                   isTargetAdmin
+                                       ? 'Ketua Kelas • ${m['nim'] ?? "-"}'
+-                                      : (isVice 
+-                                          ? 'Wakil Ketua • ${m['nim'] ?? "-"}' 
+-                                          : m['nim'] ?? '-'),
+-                                  style: TextStyle(color: Colors.grey[500], fontSize: 13),
++                                      : (isVice
++                                            ? 'Wakil Ketua • ${m['nim'] ?? "-"}'
++                                            : m['nim'] ?? '-'),
++                                  style: TextStyle(
++                                    color: Colors.grey[500],
++                                    fontSize: 13,
++                                  ),
+                                 ),
+-                                trailing: (isAdmin && !isTargetAdmin && !isSelf)
++                                trailing:
++                                    (_canEditMembers &&
++                                        !isTargetAdmin &&
++                                        !isSelf)
+                                     ? IconButton(
+                                         icon: Icon(
+                                           Icons.remove_circle_outline,
+@@ -950,11 +998,12 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+               arguments: {'classId': _classId, 'role': _userRole},
+             ),
+           ),
+-          IconButton(
+-            tooltip: "Anggota",
+-            icon: const Icon(Icons.group_outlined, color: Colors.black87),
+-            onPressed: _showMemberList,
+-          ),
++          if (_canViewMembers || _canManageCourses)
++            IconButton(
++              tooltip: "Pengaturan dan Anggota",
++              icon: const Icon(Icons.group_outlined, color: Colors.black87),
++              onPressed: _showMemberList,
++            ),
+           const SizedBox(width: 8),
+         ],
+       ),
+@@ -1009,25 +1058,32 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+                           _buildTaskCard(_tasks[index]),
+                     ),
+                   )),
+-      floatingActionButton: FloatingActionButton.extended(
+-        onPressed: () async {
+-          await Navigator.pushNamed(
+-            context,
+-            '/task-form',
+-            arguments: {'classId': _classId},
+-          );
+-          _fetchTasks();
+-        },
+-        backgroundColor: _secondaryColor,
+-        elevation: 4,
+-        highlightElevation: 0,
+-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
+-        icon: const Icon(Icons.add_rounded, color: Colors.white),
+-        label: const Text(
+-          "Tugas Baru",
+-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+-        ),
+-      ),
++      floatingActionButton: _canManageReminders
++          ? FloatingActionButton.extended(
++              onPressed: () async {
++                await Navigator.pushNamed(
++                  context,
++                  '/task-form',
++                  arguments: {'classId': _classId},
++                );
++                _fetchTasks();
++              },
++              backgroundColor: _secondaryColor,
++              elevation: 4,
++              highlightElevation: 0,
++              shape: RoundedRectangleBorder(
++                borderRadius: BorderRadius.circular(50),
++              ),
++              icon: const Icon(Icons.add_rounded, color: Colors.white),
++              label: const Text(
++                "Reminder Baru",
++                style: TextStyle(
++                  color: Colors.white,
++                  fontWeight: FontWeight.bold,
++                ),
++              ),
++            )
++          : null,
+     );
+   }
+ 
+@@ -1035,6 +1091,14 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+     bool isOverdue = false;
+     String reminderText = '-';
+     Color timeColor = Colors.grey;
++    final priority = ReminderPriority.fromValue(task['priority']);
++    final status = ReminderStatus.fromValue(task['status']);
++    final priorityColor = switch (priority) {
++      ReminderPriority.low => Colors.green,
++      ReminderPriority.medium => Colors.blue,
++      ReminderPriority.high => Colors.orange,
++      ReminderPriority.urgent => Colors.red,
++    };
+ 
+     if (task['waktu_reminder'] != null) {
+       final date = DateTime.parse(task['waktu_reminder']);
+@@ -1133,12 +1197,43 @@ class _ClassBoardPageState extends State<ClassBoardPage> {
+                             ),
+                           ),
+                         ),
+-                        if (isOverdue)
+-                          Icon(
+-                            Icons.error_outline_rounded,
+-                            color: Colors.red[300],
+-                            size: 20,
+-                          ),
++                        Row(
++                          children: [
++                            Container(
++                              padding: const EdgeInsets.symmetric(
++                                horizontal: 8,
++                                vertical: 5,
++                              ),
++                              decoration: BoxDecoration(
++                                color: priorityColor.withOpacity(0.1),
++                                borderRadius: BorderRadius.circular(8),
++                              ),
++                              child: Text(
++                                priority.label.toUpperCase(),
++                                style: TextStyle(
++                                  color: priorityColor,
++                                  fontSize: 9,
++                                  fontWeight: FontWeight.w800,
++                                ),
++                              ),
++                            ),
++                            if (status == ReminderStatus.completed) ...[
++                              const SizedBox(width: 8),
++                              const Icon(
++                                Icons.check_circle_rounded,
++                                color: Colors.green,
++                                size: 20,
++                              ),
++                            ] else if (isOverdue) ...[
++                              const SizedBox(width: 8),
++                              Icon(
++                                Icons.error_outline_rounded,
++                                color: Colors.red[300],
++                                size: 20,
++                              ),
++                            ],
++                          ],
++                        ),
+                       ],
+                     ),
+                     const SizedBox(height: 12),
+diff --git a/lib/pages/create_class_page.dart b/lib/pages/create_class_page.dart
+index 529247e..000d6ad 100644
+--- a/lib/pages/create_class_page.dart
++++ b/lib/pages/create_class_page.dart
+@@ -4,6 +4,9 @@ import 'package:flutter_easyloading/flutter_easyloading.dart';
+ import 'package:flutter/services.dart';
+ import 'dart:math';
+ 
++import '../models/user_role.dart';
++import '../services/auth_service.dart';
++
+ class CreateClassPage extends StatefulWidget {
+   const CreateClassPage({super.key});
+ 
+@@ -24,7 +27,8 @@ class _CreateClassPageState extends State<CreateClassPage> {
+     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+     Random rnd = Random();
+     return String.fromCharCodes(
+-        Iterable.generate(5, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))));
++      Iterable.generate(5, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))),
++    );
+   }
+ 
+   @override
+@@ -46,18 +50,24 @@ class _CreateClassPageState extends State<CreateClassPage> {
+     final userNim = user.userMetadata?['nim'] ?? '-';
+ 
+     try {
+-      final classData = await Supabase.instance.client.from('kelas').insert({
+-        'nama_kelas': _nameController.text.trim(),
+-        'kode_kelas': _codeController.text,
+-        'kode_wakil': 'W-${_generateRandomCode()}',
+-        'created_by': user.id,
+-        'is_open': true,
+-      }).select().single();
++      final classData = await Supabase.instance.client
++          .from('kelas')
++          .insert({
++            'nama_kelas': _nameController.text.trim(),
++            'kode_kelas': _codeController.text,
++            'kode_wakil': 'W-${_generateRandomCode()}',
++            'created_by': user.id,
++            'is_open': true,
++          })
++          .select()
++          .single();
+ 
+       await Supabase.instance.client.from('anggota_kelas').insert({
+         'kelas_id': classData['id'],
+         'user_email': user.email,
+-        'role': 'Ketua Kelas',
++        'role': AuthService.instance.currentRole == UserRole.classLeader
++            ? UserRole.classLeader.value
++            : AuthService.instance.currentRole.value,
+         'user_name': userName,
+         'nim': userNim,
+       });
+@@ -168,9 +178,14 @@ class _CreateClassPageState extends State<CreateClassPage> {
+                     borderRadius: BorderRadius.circular(16),
+                     borderSide: BorderSide(color: _primaryColor, width: 2),
+                   ),
+-                  contentPadding:
+-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+-                  prefixIcon: Icon(Icons.class_outlined, color: Colors.grey[400]),
++                  contentPadding: const EdgeInsets.symmetric(
++                    horizontal: 20,
++                    vertical: 16,
++                  ),
++                  prefixIcon: Icon(
++                    Icons.class_outlined,
++                    color: Colors.grey[400],
++                  ),
+                 ),
+               ),
+             ),
+@@ -242,7 +257,9 @@ class _CreateClassPageState extends State<CreateClassPage> {
+                             children: [
+                               Container(
+                                 padding: const EdgeInsets.symmetric(
+-                                    horizontal: 8, vertical: 4),
++                                  horizontal: 8,
++                                  vertical: 4,
++                                ),
+                                 decoration: BoxDecoration(
+                                   color: Colors.black.withOpacity(0.2),
+                                   borderRadius: BorderRadius.circular(8),
+@@ -261,7 +278,7 @@ class _CreateClassPageState extends State<CreateClassPage> {
+                                 Icons.copy_rounded,
+                                 color: Colors.white.withOpacity(0.5),
+                                 size: 18,
+-                              )
++                              ),
+                             ],
+                           ),
+                           const SizedBox(height: 16),
+@@ -283,14 +300,19 @@ class _CreateClassPageState extends State<CreateClassPage> {
+                           ),
+                           const SizedBox(height: 12),
+                           InkWell(
+-                            onTap: () => setState(() =>
+-                                _codeController.text = _generateRandomCode()),
++                            onTap: () => setState(
++                              () =>
++                                  _codeController.text = _generateRandomCode(),
++                            ),
+                             child: Row(
+                               mainAxisAlignment: MainAxisAlignment.center,
+                               mainAxisSize: MainAxisSize.min,
+                               children: [
+-                                const Icon(Icons.refresh_rounded,
+-                                    color: Colors.white, size: 16),
++                                const Icon(
++                                  Icons.refresh_rounded,
++                                  color: Colors.white,
++                                  size: 16,
++                                ),
+                                 const SizedBox(width: 8),
+                                 const Text(
+                                   "Acak Ulang Kode",
+@@ -319,7 +341,7 @@ class _CreateClassPageState extends State<CreateClassPage> {
+               ),
+             ),
+ 
+-            // Spacer to push button to bottom if screen is tall, 
++            // Spacer to push button to bottom if screen is tall,
+             // or just spacing if scrolling
+             const SizedBox(height: 48),
+ 
+@@ -348,15 +370,18 @@ class _CreateClassPageState extends State<CreateClassPage> {
+                       ),
+                     ),
+                     SizedBox(width: 8),
+-                    Icon(Icons.arrow_forward_rounded,
+-                        color: Colors.white, size: 20),
++                    Icon(
++                      Icons.arrow_forward_rounded,
++                      color: Colors.white,
++                      size: 20,
++                    ),
+                   ],
+                 ),
+               ),
+-            )
++            ),
+           ],
+         ),
+       ),
+     );
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/pages/profile_page.dart b/lib/pages/profile_page.dart
+index fdc97c0..97309be 100644
+--- a/lib/pages/profile_page.dart
++++ b/lib/pages/profile_page.dart
+@@ -4,6 +4,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
+ import 'package:flutter_easyloading/flutter_easyloading.dart';
+ import 'package:image_picker/image_picker.dart';
+ 
++import '../services/auth_service.dart';
++
+ class ProfilePage extends StatefulWidget {
+   const ProfilePage({super.key});
+ 
+@@ -15,7 +17,7 @@ class _ProfilePageState extends State<ProfilePage> {
+   final _nameController = TextEditingController();
+   final _nimController = TextEditingController(); // Read only
+   String? _avatarUrl;
+-  
++
+   final _currentUser = Supabase.instance.client.auth.currentUser;
+   final ImagePicker _picker = ImagePicker();
+ 
+@@ -39,13 +41,13 @@ class _ProfilePageState extends State<ProfilePage> {
+   Future<void> _pickAndUploadImage() async {
+     try {
+       final XFile? image = await _picker.pickImage(
+-      source: ImageSource.gallery, 
+-      imageQuality: 50, 
+-    );
++        source: ImageSource.gallery,
++        imageQuality: 50,
++      );
+       if (image == null) return;
+ 
+       EasyLoading.show(status: 'Mengupload foto...');
+-      
++
+       final fileExt = image.path.split('.').last;
+       final fileName = '${_currentUser!.id}_profile.$fileExt';
+       final filePath = 'avatars/$fileName';
+@@ -68,6 +70,10 @@ class _ProfilePageState extends State<ProfilePage> {
+       await Supabase.instance.client.auth.updateUser(
+         UserAttributes(data: {'avatar_url': imageUrl}),
+       );
++      await Supabase.instance.client
++          .from('profiles')
++          .update({'avatar_url': imageUrl})
++          .eq('id', _currentUser.id);
+ 
+       await Supabase.instance.client
+           .from('anggota_kelas')
+@@ -82,7 +88,7 @@ class _ProfilePageState extends State<ProfilePage> {
+       setState(() {
+         _avatarUrl = imageUrl;
+       });
+-      
++
+       EasyLoading.showSuccess('Foto diperbarui!');
+     } catch (e) {
+       EasyLoading.showError('Gagal upload: $e');
+@@ -102,14 +108,19 @@ class _ProfilePageState extends State<ProfilePage> {
+       await Supabase.instance.client.auth.updateUser(
+         UserAttributes(data: {'name': _nameController.text}),
+       );
++      await Supabase.instance.client
++          .from('profiles')
++          .update({'display_name': _nameController.text.trim()})
++          .eq('id', _currentUser!.id);
+ 
+       await Supabase.instance.client
+           .from('anggota_kelas')
+           .update({'user_name': _nameController.text})
+-          .eq('user_email', _currentUser!.email!);
++          .eq('user_email', _currentUser.email!);
++      await AuthService.instance.refreshSession();
+ 
+       EasyLoading.showSuccess('Profil disimpan!');
+-      if(mounted) Navigator.pop(context, true);
++      if (mounted) Navigator.pop(context, true);
+     } catch (e) {
+       EasyLoading.showError('Gagal menyimpan: $e');
+     } finally {
+@@ -122,7 +133,10 @@ class _ProfilePageState extends State<ProfilePage> {
+     return Scaffold(
+       backgroundColor: Colors.white,
+       appBar: AppBar(
+-        title: const Text("Edit Profil", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
++        title: const Text(
++          "Edit Profil",
++          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
++        ),
+         backgroundColor: Colors.white,
+         elevation: 0,
+         iconTheme: const IconThemeData(color: Colors.black),
+@@ -138,11 +152,11 @@ class _ProfilePageState extends State<ProfilePage> {
+                   CircleAvatar(
+                     radius: 60,
+                     backgroundColor: Colors.grey[200],
+-                    backgroundImage: _avatarUrl != null 
+-                        ? NetworkImage(_avatarUrl!) 
++                    backgroundImage: _avatarUrl != null
++                        ? NetworkImage(_avatarUrl!)
+                         : null,
+-                    child: _avatarUrl == null 
+-                        ? const Icon(Icons.person, size: 60, color: Colors.grey) 
++                    child: _avatarUrl == null
++                        ? const Icon(Icons.person, size: 60, color: Colors.grey)
+                         : null,
+                   ),
+                   Positioned(
+@@ -156,10 +170,14 @@ class _ProfilePageState extends State<ProfilePage> {
+                           color: Colors.blueAccent,
+                           shape: BoxShape.circle,
+                         ),
+-                        child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
++                        child: const Icon(
++                          Icons.camera_alt,
++                          color: Colors.white,
++                          size: 20,
++                        ),
+                       ),
+                     ),
+-                  )
++                  ),
+                 ],
+               ),
+             ),
+@@ -171,7 +189,9 @@ class _ProfilePageState extends State<ProfilePage> {
+               decoration: InputDecoration(
+                 labelText: 'Nama Lengkap',
+                 prefixIcon: const Icon(Icons.person_outline),
+-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
++                border: OutlineInputBorder(
++                  borderRadius: BorderRadius.circular(12),
++                ),
+               ),
+             ),
+             const SizedBox(height: 16),
+@@ -186,7 +206,7 @@ class _ProfilePageState extends State<ProfilePage> {
+                 fillColor: Colors.grey[100],
+                 border: OutlineInputBorder(
+                   borderRadius: BorderRadius.circular(12),
+-                  borderSide: BorderSide.none
++                  borderSide: BorderSide.none,
+                 ),
+               ),
+             ),
+@@ -200,9 +220,14 @@ class _ProfilePageState extends State<ProfilePage> {
+                 onPressed: _saveProfile,
+                 style: ElevatedButton.styleFrom(
+                   backgroundColor: const Color(0xFF2563EB),
+-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
++                  shape: RoundedRectangleBorder(
++                    borderRadius: BorderRadius.circular(12),
++                  ),
++                ),
++                child: const Text(
++                  "Simpan Perubahan",
++                  style: TextStyle(color: Colors.white, fontSize: 16),
+                 ),
+-                child: const Text("Simpan Perubahan", style: TextStyle(color: Colors.white, fontSize: 16)),
+               ),
+             ),
+           ],
+@@ -210,4 +235,4 @@ class _ProfilePageState extends State<ProfilePage> {
+       ),
+     );
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/pages/role_dashboard_page.dart b/lib/pages/role_dashboard_page.dart
+new file mode 100644
+index 0000000..fc96714
+--- /dev/null
++++ b/lib/pages/role_dashboard_page.dart
+@@ -0,0 +1,333 @@
++import 'package:flutter/material.dart';
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import '../models/user_role.dart';
++import '../services/auth_service.dart';
++
++class RoleDashboardPage extends StatefulWidget {
++  const RoleDashboardPage({super.key, required this.role});
++
++  final UserRole role;
++
++  @override
++  State<RoleDashboardPage> createState() => _RoleDashboardPageState();
++}
++
++class _RoleDashboardPageState extends State<RoleDashboardPage> {
++  static const _primaryColor = Color(0xFF2563EB);
++  static const _secondaryColor = Color(0xFF1E293B);
++
++  Future<Map<String, int>>? _statistics;
++
++  @override
++  void initState() {
++    super.initState();
++    if (widget.role == UserRole.admin) {
++      _statistics = _loadStatistics();
++    }
++  }
++
++  Future<Map<String, int>> _loadStatistics() async {
++    final client = Supabase.instance.client;
++    final results = await Future.wait([
++      client.from('profiles').select('id'),
++      client.from('kelas').select('id'),
++      client.from('matakuliah').select('id'),
++      client.from('tasks').select('id'),
++    ]);
++    return {
++      'User': (results[0] as List).length,
++      'Kelas': (results[1] as List).length,
++      'Mata Kuliah': (results[2] as List).length,
++      'Reminder': (results[3] as List).length,
++    };
++  }
++
++  List<_DashboardAction> get _actions {
++    return switch (widget.role) {
++      UserRole.admin => const [
++        _DashboardAction(
++          'Kelola User',
++          'Atur profil dan role pengguna',
++          Icons.manage_accounts_rounded,
++          '/users',
++        ),
++        _DashboardAction(
++          'Kelola Kelas',
++          'Buat dan buka seluruh kelas',
++          Icons.groups_rounded,
++          '/classes',
++        ),
++        _DashboardAction(
++          'Kelola Mata Kuliah',
++          'Pilih kelas untuk mengatur mata kuliah',
++          Icons.menu_book_rounded,
++          '/classes',
++        ),
++        _DashboardAction(
++          'Kelola Reminder',
++          'Pilih kelas untuk mengatur reminder',
++          Icons.notifications_active_rounded,
++          '/classes',
++        ),
++        _DashboardAction(
++          'Kelola Pengumuman',
++          'Publikasikan informasi aplikasi',
++          Icons.campaign_rounded,
++          '/announcements',
++        ),
++      ],
++      UserRole.lecturer => const [
++        _DashboardAction(
++          'Kelola Reminder',
++          'Reminder untuk kelas yang diajar',
++          Icons.notifications_active_rounded,
++          '/classes',
++        ),
++        _DashboardAction(
++          'Kelola Pengumuman',
++          'Informasi untuk kelas dan mahasiswa',
++          Icons.campaign_rounded,
++          '/announcements',
++        ),
++        _DashboardAction(
++          'Kelas yang Diajar',
++          'Lihat daftar kelas pengajaran',
++          Icons.school_rounded,
++          '/classes',
++        ),
++        _DashboardAction(
++          'Kelola Jadwal',
++          'Pilih kelas untuk mengatur jadwal',
++          Icons.calendar_month_rounded,
++          '/classes',
++        ),
++      ],
++      UserRole.classLeader => const [
++        _DashboardAction(
++          'Reminder Kelas',
++          'Kelola reminder kelas',
++          Icons.notifications_active_rounded,
++          '/classes',
++        ),
++        _DashboardAction(
++          'Pengumuman Kelas',
++          'Kelola pengumuman kelas',
++          Icons.campaign_rounded,
++          '/announcements',
++        ),
++        _DashboardAction(
++          'Anggota Kelas',
++          'Pilih kelas untuk melihat anggota',
++          Icons.people_alt_rounded,
++          '/classes',
++        ),
++      ],
++      UserRole.student => const [
++        _DashboardAction(
++          'Reminder',
++          'Lihat reminder perkuliahan',
++          Icons.notifications_none_rounded,
++          '/classes',
++        ),
++        _DashboardAction(
++          'Jadwal',
++          'Lihat jadwal setiap kelas',
++          Icons.calendar_today_rounded,
++          '/classes',
++        ),
++        _DashboardAction(
++          'Pengumuman',
++          'Lihat informasi terbaru',
++          Icons.campaign_outlined,
++          '/announcements',
++        ),
++      ],
++    };
++  }
++
++  Future<void> _logout() async {
++    await AuthService.instance.signOut();
++    if (!mounted) return;
++    Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    final user = AuthService.instance.currentUser;
++    return Scaffold(
++      backgroundColor: const Color(0xFFF1F5F9),
++      appBar: AppBar(
++        title: const Text('ReminderKita'),
++        actions: [
++          IconButton(
++            tooltip: 'Profil',
++            onPressed: () => Navigator.pushNamed(context, '/profile'),
++            icon: const Icon(Icons.person_outline_rounded),
++          ),
++          IconButton(
++            tooltip: 'Keluar',
++            onPressed: _logout,
++            icon: const Icon(Icons.logout_rounded),
++          ),
++        ],
++      ),
++      body: RefreshIndicator(
++        onRefresh: () async {
++          await AuthService.instance.refreshSession();
++          if (widget.role == UserRole.admin) {
++            setState(() => _statistics = _loadStatistics());
++            await _statistics;
++          }
++        },
++        child: ListView(
++          padding: const EdgeInsets.all(24),
++          children: [
++            Text(
++              'Halo, ${user?.displayName ?? 'Pengguna'}',
++              style: const TextStyle(
++                color: _secondaryColor,
++                fontSize: 26,
++                fontWeight: FontWeight.w900,
++              ),
++            ),
++            const SizedBox(height: 6),
++            Text(
++              'Dashboard ${widget.role.label}',
++              style: TextStyle(color: Colors.grey[600], fontSize: 15),
++            ),
++            if (_statistics != null) ...[
++              const SizedBox(height: 24),
++              _StatisticsPanel(statistics: _statistics!),
++            ],
++            const SizedBox(height: 24),
++            GridView.builder(
++              shrinkWrap: true,
++              physics: const NeverScrollableScrollPhysics(),
++              itemCount: _actions.length,
++              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
++                maxCrossAxisExtent: 360,
++                mainAxisExtent: 170,
++                crossAxisSpacing: 16,
++                mainAxisSpacing: 16,
++              ),
++              itemBuilder: (context, index) {
++                final action = _actions[index];
++                return InkWell(
++                  borderRadius: BorderRadius.circular(24),
++                  onTap: () => Navigator.pushNamed(context, action.route),
++                  child: Ink(
++                    padding: const EdgeInsets.all(20),
++                    decoration: BoxDecoration(
++                      color: Colors.white,
++                      borderRadius: BorderRadius.circular(24),
++                      boxShadow: [
++                        BoxShadow(
++                          color: Colors.black.withOpacity(0.04),
++                          blurRadius: 20,
++                          offset: const Offset(0, 8),
++                        ),
++                      ],
++                    ),
++                    child: Column(
++                      crossAxisAlignment: CrossAxisAlignment.start,
++                      children: [
++                        Container(
++                          padding: const EdgeInsets.all(12),
++                          decoration: BoxDecoration(
++                            color: _primaryColor.withOpacity(0.1),
++                            borderRadius: BorderRadius.circular(14),
++                          ),
++                          child: Icon(action.icon, color: _primaryColor),
++                        ),
++                        const Spacer(),
++                        Text(
++                          action.title,
++                          style: const TextStyle(
++                            fontSize: 17,
++                            fontWeight: FontWeight.w800,
++                            color: _secondaryColor,
++                          ),
++                        ),
++                        const SizedBox(height: 5),
++                        Text(
++                          action.subtitle,
++                          maxLines: 2,
++                          overflow: TextOverflow.ellipsis,
++                          style: TextStyle(
++                            color: Colors.grey[500],
++                            fontSize: 12,
++                          ),
++                        ),
++                      ],
++                    ),
++                  ),
++                );
++              },
++            ),
++          ],
++        ),
++      ),
++    );
++  }
++}
++
++class _StatisticsPanel extends StatelessWidget {
++  const _StatisticsPanel({required this.statistics});
++
++  final Future<Map<String, int>> statistics;
++
++  @override
++  Widget build(BuildContext context) {
++    return FutureBuilder<Map<String, int>>(
++      future: statistics,
++      builder: (context, snapshot) {
++        if (snapshot.connectionState == ConnectionState.waiting) {
++          return const SizedBox(
++            height: 90,
++            child: Center(child: CircularProgressIndicator()),
++          );
++        }
++        if (snapshot.hasError) {
++          return const Text('Statistik belum dapat dimuat.');
++        }
++        return Wrap(
++          spacing: 12,
++          runSpacing: 12,
++          children: (snapshot.data ?? const {}).entries.map((entry) {
++            return Container(
++              width: 140,
++              padding: const EdgeInsets.all(16),
++              decoration: BoxDecoration(
++                color: Colors.white,
++                borderRadius: BorderRadius.circular(18),
++              ),
++              child: Column(
++                crossAxisAlignment: CrossAxisAlignment.start,
++                children: [
++                  Text(
++                    '${entry.value}',
++                    style: const TextStyle(
++                      fontSize: 24,
++                      fontWeight: FontWeight.w900,
++                    ),
++                  ),
++                  Text(entry.key, style: TextStyle(color: Colors.grey[600])),
++                ],
++              ),
++            );
++          }).toList(),
++        );
++      },
++    );
++  }
++}
++
++class _DashboardAction {
++  const _DashboardAction(this.title, this.subtitle, this.icon, this.route);
++
++  final String title;
++  final String subtitle;
++  final IconData icon;
++  final String route;
++}
+diff --git a/lib/pages/schedule_page.dart b/lib/pages/schedule_page.dart
+index d16f200..3c1c620 100644
+--- a/lib/pages/schedule_page.dart
++++ b/lib/pages/schedule_page.dart
+@@ -5,6 +5,9 @@ import 'package:flutter_easyloading/flutter_easyloading.dart';
+ import 'package:intl/intl.dart';
+ import 'package:flutter/services.dart';
+ 
++import '../models/user_role.dart';
++import '../services/auth_service.dart';
++
+ class SchedulePage extends StatefulWidget {
+   const SchedulePage({super.key});
+ 
+@@ -25,7 +28,6 @@ class _SchedulePageState extends State<SchedulePage>
+   ];
+ 
+   int _classId = 0;
+-  String _userRole = 'student';
+ 
+   List<Map<String, dynamic>> _subjectsList = [];
+   Map<int, Map<String, dynamic>> _tasksCache = {};
+@@ -37,6 +39,9 @@ class _SchedulePageState extends State<SchedulePage>
+   final Color _secondaryColor = const Color(0xFF1E293B);
+   final Color _bgColor = const Color(0xFFF8FAFC);
+ 
++  bool get _canManageSchedule =>
++      AuthService.instance.hasPermission(AppPermission.manageSchedules);
++
+   @override
+   void initState() {
+     super.initState();
+@@ -54,7 +59,6 @@ class _SchedulePageState extends State<SchedulePage>
+     if (!_isDataLoaded) {
+       final args = ModalRoute.of(context)!.settings.arguments as Map;
+       _classId = args['classId'];
+-      _userRole = args['role']?.toString() ?? 'student';
+ 
+       _preloadData();
+       _isDataLoaded = true;
+@@ -631,7 +635,7 @@ class _SchedulePageState extends State<SchedulePage>
+                                             ),
+                                           ),
+                                         ),
+-                                        if (_userRole == 'Ketua Kelas')
++                                        if (_canManageSchedule)
+                                           Row(
+                                             mainAxisSize: MainAxisSize.min,
+                                             children: [
+@@ -750,7 +754,7 @@ class _SchedulePageState extends State<SchedulePage>
+           );
+         }).toList(),
+       ),
+-      floatingActionButton: _userRole == 'Ketua Kelas'
++      floatingActionButton: _canManageSchedule
+           ? FloatingActionButton(
+               onPressed: () => _showScheduleForm(),
+               backgroundColor: _secondaryColor,
+diff --git a/lib/pages/subject_management_page.dart b/lib/pages/subject_management_page.dart
+index 140c37c..72ee455 100644
+--- a/lib/pages/subject_management_page.dart
++++ b/lib/pages/subject_management_page.dart
+@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
+ import 'package:supabase_flutter/supabase_flutter.dart';
+ import 'package:flutter_easyloading/flutter_easyloading.dart';
+ 
++import '../models/user_role.dart';
++import '../services/auth_service.dart';
++
+ class SubjectManagementPage extends StatefulWidget {
+   const SubjectManagementPage({super.key});
+ 
+@@ -12,6 +15,7 @@ class SubjectManagementPage extends StatefulWidget {
+ class _SubjectManagementPageState extends State<SubjectManagementPage> {
+   int? _classId;
+   List<Map<String, dynamic>> _subjects = [];
++  List<Map<String, dynamic>> _lecturers = [];
+   bool _isLoading = true;
+ 
+   final Color _primaryColor = const Color(0xFF2563EB);
+@@ -35,9 +39,19 @@ class _SubjectManagementPageState extends State<SubjectManagementPage> {
+           .select()
+           .eq('kelas_id', _classId!)
+           .order('nama', ascending: true);
+-      
++      List<Map<String, dynamic>> lecturers = [];
++      if (AuthService.instance.currentRole == UserRole.admin) {
++        final rows = await Supabase.instance.client
++            .from('profiles')
++            .select('id, display_name')
++            .eq('role', UserRole.lecturer.value)
++            .order('display_name');
++        lecturers = List<Map<String, dynamic>>.from(rows);
++      }
++
+       setState(() {
+         _subjects = List<Map<String, dynamic>>.from(data);
++        _lecturers = lecturers;
+         _isLoading = false;
+       });
+     } catch (e) {
+@@ -53,50 +67,103 @@ class _SubjectManagementPageState extends State<SubjectManagementPage> {
+       EasyLoading.showSuccess("Terhapus");
+       _fetchSubjects();
+     } catch (e) {
+-      EasyLoading.showError("Gagal menghapus. Matkul mungkin sedang digunakan di jadwal/tugas.");
++      EasyLoading.showError(
++        "Gagal menghapus. Matkul mungkin sedang digunakan di jadwal/tugas.",
++      );
+     }
+   }
+ 
+-  void _showAddDialog() {
+-    final nameCtrl = TextEditingController();
+-    final lecturerCtrl = TextEditingController();
++  void _showCourseDialog({Map<String, dynamic>? subject}) {
++    final nameCtrl = TextEditingController(text: subject?['nama']);
++    final lecturerCtrl = TextEditingController(text: subject?['dosen']);
++    String? lecturerId = subject?['lecturer_id']?.toString();
+ 
+     showDialog(
+       context: context,
+-      builder: (context) => AlertDialog(
+-        title: const Text("Mata Kuliah Baru"),
+-        content: Column(
+-          mainAxisSize: MainAxisSize.min,
+-          children: [
+-            TextField(
+-              controller: nameCtrl,
+-              decoration: const InputDecoration(labelText: "Nama Mata Kuliah"),
++      builder: (context) => StatefulBuilder(
++        builder: (context, setDialogState) => AlertDialog(
++          title: Text(
++            subject == null ? "Mata Kuliah Baru" : "Edit Mata Kuliah",
++          ),
++          content: Column(
++            mainAxisSize: MainAxisSize.min,
++            children: [
++              TextField(
++                controller: nameCtrl,
++                decoration: const InputDecoration(
++                  labelText: "Nama Mata Kuliah",
++                ),
++              ),
++              const SizedBox(height: 12),
++              if (AuthService.instance.currentRole == UserRole.admin &&
++                  _lecturers.isNotEmpty)
++                DropdownButtonFormField<String>(
++                  value: lecturerId,
++                  decoration: const InputDecoration(labelText: 'Dosen'),
++                  items: _lecturers
++                      .map(
++                        (lecturer) => DropdownMenuItem(
++                          value: lecturer['id'].toString(),
++                          child: Text(lecturer['display_name']),
++                        ),
++                      )
++                      .toList(),
++                  onChanged: (value) {
++                    setDialogState(() => lecturerId = value);
++                    final lecturer = _lecturers.firstWhere(
++                      (item) => item['id'].toString() == value,
++                    );
++                    lecturerCtrl.text = lecturer['display_name'];
++                  },
++                )
++              else
++                TextField(
++                  controller: lecturerCtrl,
++                  readOnly:
++                      AuthService.instance.currentRole == UserRole.lecturer,
++                  decoration: const InputDecoration(labelText: "Nama Dosen"),
++                ),
++            ],
++          ),
++          actions: [
++            TextButton(
++              onPressed: () => Navigator.pop(context),
++              child: const Text("Batal"),
+             ),
+-            const SizedBox(height: 12),
+-            TextField(
+-              controller: lecturerCtrl,
+-              decoration: const InputDecoration(labelText: "Nama Dosen"),
++            ElevatedButton(
++              onPressed: () async {
++                if (nameCtrl.text.trim().isEmpty) return;
++                final currentUser = AuthService.instance.currentUser;
++                final payload = {
++                  'kelas_id': _classId,
++                  'nama': nameCtrl.text.trim(),
++                  'dosen': AuthService.instance.currentRole == UserRole.lecturer
++                      ? currentUser?.displayName
++                      : lecturerCtrl.text.trim(),
++                  'lecturer_id':
++                      AuthService.instance.currentRole == UserRole.lecturer
++                      ? currentUser?.id
++                      : lecturerId,
++                };
++                Navigator.pop(context);
++                EasyLoading.show();
++                if (subject == null) {
++                  await Supabase.instance.client
++                      .from('matakuliah')
++                      .insert(payload);
++                } else {
++                  await Supabase.instance.client
++                      .from('matakuliah')
++                      .update(payload)
++                      .eq('id', subject['id']);
++                }
++                EasyLoading.dismiss();
++                _fetchSubjects();
++              },
++              child: const Text("Simpan"),
+             ),
+           ],
+         ),
+-        actions: [
+-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Batal")),
+-          ElevatedButton(
+-            onPressed: () async {
+-              if (nameCtrl.text.isEmpty) return;
+-              Navigator.pop(context);
+-              EasyLoading.show();
+-              await Supabase.instance.client.from('matakuliah').insert({
+-                'kelas_id': _classId,
+-                'nama': nameCtrl.text,
+-                'dosen': lecturerCtrl.text,
+-              });
+-              EasyLoading.dismiss();
+-              _fetchSubjects();
+-            },
+-            child: const Text("Simpan"),
+-          ),
+-        ],
+       ),
+     );
+   }
+@@ -111,34 +178,51 @@ class _SubjectManagementPageState extends State<SubjectManagementPage> {
+       body: _isLoading
+           ? const Center(child: CircularProgressIndicator())
+           : _subjects.isEmpty
+-              ? const Center(child: Text("Belum ada mata kuliah"))
+-              : ListView.builder(
+-                  padding: const EdgeInsets.all(16),
+-                  itemCount: _subjects.length,
+-                  itemBuilder: (context, index) {
+-                    final s = _subjects[index];
+-                    return Card(
+-                      child: ListTile(
+-                        leading: CircleAvatar(
+-                          backgroundColor: _primaryColor.withOpacity(0.1),
+-                          child: Text(s['nama'][0], style: TextStyle(color: _primaryColor)),
++          ? const Center(child: Text("Belum ada mata kuliah"))
++          : ListView.builder(
++              padding: const EdgeInsets.all(16),
++              itemCount: _subjects.length,
++              itemBuilder: (context, index) {
++                final s = _subjects[index];
++                return Card(
++                  child: ListTile(
++                    leading: CircleAvatar(
++                      backgroundColor: _primaryColor.withOpacity(0.1),
++                      child: Text(
++                        s['nama'][0],
++                        style: TextStyle(color: _primaryColor),
++                      ),
++                    ),
++                    title: Text(
++                      s['nama'],
++                      style: const TextStyle(fontWeight: FontWeight.bold),
++                    ),
++                    subtitle: Text(s['dosen'] ?? '-'),
++                    trailing: Wrap(
++                      children: [
++                        IconButton(
++                          icon: const Icon(Icons.edit_outlined),
++                          onPressed: () => _showCourseDialog(subject: s),
+                         ),
+-                        title: Text(s['nama'], style: const TextStyle(fontWeight: FontWeight.bold)),
+-                        subtitle: Text(s['dosen'] ?? '-'),
+-                        trailing: IconButton(
+-                          icon: const Icon(Icons.delete_outline, color: Colors.red),
++                        IconButton(
++                          icon: const Icon(
++                            Icons.delete_outline,
++                            color: Colors.red,
++                          ),
+                           onPressed: () => _deleteSubject(s['id']),
+                         ),
+-                      ),
+-                    );
+-                  },
+-                ),
++                      ],
++                    ),
++                  ),
++                );
++              },
++            ),
+       floatingActionButton: FloatingActionButton.extended(
+-        onPressed: _showAddDialog,
++        onPressed: _showCourseDialog,
+         label: const Text("Tambah Matkul"),
+         icon: const Icon(Icons.add),
+         backgroundColor: _secondaryColor,
+       ),
+     );
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/pages/task_form_page.dart b/lib/pages/task_form_page.dart
+index 34e7040..a10d67d 100644
+--- a/lib/pages/task_form_page.dart
++++ b/lib/pages/task_form_page.dart
+@@ -4,11 +4,14 @@ import 'package:flutter/services.dart';
+ import 'package:supabase_flutter/supabase_flutter.dart';
+ import 'package:flutter_easyloading/flutter_easyloading.dart';
+ import 'package:intl/intl.dart';
+-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+-import 'package:timezone/timezone.dart' as tz;
+ import 'package:image_picker/image_picker.dart';
+ import 'package:flutter/cupertino.dart';
+ 
++import '../models/reminder.dart';
++import '../models/user_role.dart';
++import '../services/auth_service.dart';
++import '../services/notification_service.dart';
++
+ class TaskFormPage extends StatefulWidget {
+   const TaskFormPage({super.key});
+ 
+@@ -18,8 +21,6 @@ class TaskFormPage extends StatefulWidget {
+ 
+ class _TaskFormPageState extends State<TaskFormPage> {
+   final _formKey = GlobalKey<FormState>();
+-  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+-      FlutterLocalNotificationsPlugin();
+ 
+   final _judulController = TextEditingController();
+   final _deskripsiController = TextEditingController();
+@@ -35,8 +36,10 @@ class _TaskFormPageState extends State<TaskFormPage> {
+   int? _selectedSubjectId;
+   String _selectedSubjectName = '';
+   String _selectedLecturerName = '';
++  ReminderPriority _priority = ReminderPriority.medium;
++  ReminderStatus _status = ReminderStatus.pending;
++  UserRole? _targetRole;
+ 
+-  String _userRole = 'Mahasiswa';
+   bool _isDataLoaded = false;
+ 
+   final Color _primaryColor = const Color(0xFF2563EB);
+@@ -52,7 +55,6 @@ class _TaskFormPageState extends State<TaskFormPage> {
+         _classId = args['classId'] ?? args['id'];
+ 
+         _fetchSubjects();
+-        _fetchUserRole();
+ 
+         if (args.containsKey('taskData')) {
+           final data = args['taskData'];
+@@ -62,6 +64,11 @@ class _TaskFormPageState extends State<TaskFormPage> {
+           _uploadedImageUrl = data['gambar_url'] ?? '';
+           _selectedSubjectName = data['mata_kuliah'] ?? '';
+           _selectedLecturerName = data['dosen_pengampu'] ?? '';
++          _priority = ReminderPriority.fromValue(data['priority']);
++          _status = ReminderStatus.fromValue(data['status']);
++          _targetRole = data['target_role'] == null
++              ? null
++              : UserRole.fromValue(data['target_role']);
+ 
+           if (data['matakuliah_id'] != null) {
+             _selectedSubjectId = data['matakuliah_id'];
+@@ -77,28 +84,6 @@ class _TaskFormPageState extends State<TaskFormPage> {
+ 
+   // --- 1. FETCH DATA ---
+ 
+-  Future<void> _fetchUserRole() async {
+-    final user = Supabase.instance.client.auth.currentUser;
+-    if (user == null || _classId == null) return;
+-
+-    try {
+-      final data = await Supabase.instance.client
+-          .from('anggota_kelas')
+-          .select('role')
+-          .eq('kelas_id', _classId!)
+-          .eq('user_email', user.email!)
+-          .maybeSingle();
+-
+-      if (data != null && mounted) {
+-        setState(() {
+-          _userRole = data['role'] ?? 'Mahasiswa';
+-        });
+-      }
+-    } catch (e) {
+-      debugPrint("Gagal ambil role: $e");
+-    }
+-  }
+-
+   Future<void> _fetchSubjects() async {
+     if (_classId == null) return;
+     try {
+@@ -111,7 +96,7 @@ class _TaskFormPageState extends State<TaskFormPage> {
+         setState(() => _subjectsList = List<Map<String, dynamic>>.from(data));
+       }
+     } catch (e) {
+-      print("Error fetch subjects: $e");
++      debugPrint("Error fetch subjects: $e");
+     }
+   }
+ 
+@@ -169,6 +154,10 @@ class _TaskFormPageState extends State<TaskFormPage> {
+                     'kelas_id': _classId,
+                     'nama': nameCtrl.text,
+                     'dosen': lecturerCtrl.text,
++                    'lecturer_id':
++                        AuthService.instance.currentRole == UserRole.lecturer
++                        ? Supabase.instance.client.auth.currentUser?.id
++                        : null,
+                   });
+                   EasyLoading.dismiss();
+                   Navigator.pop(context);
+@@ -449,118 +438,23 @@ class _TaskFormPageState extends State<TaskFormPage> {
+     String lecturerName,
+   ) async {
+     try {
+-      for (int i = 1; i <= 10; i++) {
+-        await flutterLocalNotificationsPlugin.cancel(taskId * 10 + i);
+-      }
+-
+-      final schedules = [
+-        {
+-          'id': 1,
+-          'duration': const Duration(days: 1),
+-          'label': 'Besok',
+-          'urgent': false,
+-        },
+-        {
+-          'id': 2,
+-          'duration': const Duration(days: 2),
+-          'label': '2 hari lagi',
+-          'urgent': false,
+-        },
+-        {
+-          'id': 3,
+-          'duration': const Duration(days: 3),
+-          'label': '3 hari lagi',
+-          'urgent': false,
+-        },
+-      ];
+-
+-      final hourReminders = [
+-        {
+-          'id': 4,
+-          'duration': const Duration(hours: 12),
+-          'label': 'Hari ini (12 jam)',
+-          'urgent': true,
+-        },
+-        {
+-          'id': 5,
+-          'duration': const Duration(hours: 6),
+-          'label': '6 jam lagi',
+-          'urgent': true,
+-        },
+-        {
+-          'id': 6,
+-          'duration': const Duration(hours: 3),
+-          'label': '3 jam lagi!',
+-          'urgent': true,
+-        },
+-        {
+-          'id': 7,
+-          'duration': const Duration(minutes: 30),
+-          'label': '30 menit lagi!',
+-          'urgent': true,
+-        },
+-        {
+-          'id': 8,
+-          'duration': const Duration(minutes: 15),
+-          'label': '15 menit lagi!',
+-          'urgent': true,
+-        },
+-      ];
+-
+-      final allSchedules = [...schedules, ...hourReminders];
+-
+-      for (var item in allSchedules) {
+-        final duration = item['duration'] as Duration;
+-        final scheduleTime = dueDate.subtract(duration);
+-
+-        if (scheduleTime.isAfter(DateTime.now())) {
+-          String emoji = '📅';
+-          if ((item['urgent'] as bool)) emoji = '🚨';
+-          if (duration.inMinutes <= 60) emoji = '🔥';
+-
+-          final timeStr = DateFormat('HH:mm').format(dueDate);
+-          final notifTitle = "$emoji $subjectName: $taskTitle";
+-          final notifBody =
+-              "Tenggat: ${item['label']} ($timeStr)\n👨‍🏫 Dosen: $lecturerName";
+-
+-          final tzScheduledTime = tz.TZDateTime.from(scheduleTime, tz.local);
+-
+-          final BigTextStyleInformation bigTextStyleInformation =
+-              BigTextStyleInformation(
+-                notifBody,
+-                htmlFormatBigText: true,
+-                contentTitle: notifTitle,
+-                htmlFormatContentTitle: true,
+-                summaryText: item['label'] as String,
+-                htmlFormatSummaryText: true,
+-              );
+-
+-          final String payload = "$_classId|$taskId";
+-
+-          await flutterLocalNotificationsPlugin.zonedSchedule(
+-            taskId * 10 + (item['id'] as int),
+-            notifTitle,
+-            notifBody,
+-            tzScheduledTime,
+-            NotificationDetails(
+-              android: AndroidNotificationDetails(
+-                'channel_tugas_v2',
+-                'Reminder Tugas',
+-                channelDescription: 'Notifikasi deadline tugas',
+-                importance: Importance.max,
+-                priority: Priority.high,
+-                fullScreenIntent: true,
+-                styleInformation: bigTextStyleInformation,
+-                color: const Color(0xFF2563EB),
+-                ledColor: const Color(0xFF2563EB),
+-                enableLights: true,
+-              ),
+-            ),
+-            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+-            payload: payload,
+-          );
+-        }
+-      }
++      final user = Supabase.instance.client.auth.currentUser!;
++      await NotificationService.scheduleReminder(
++        Reminder(
++          id: taskId,
++          title: taskTitle,
++          description: _deskripsiController.text.trim(),
++          createdBy: user.id,
++          targetClass: _classId!,
++          targetRole: _targetRole,
++          dueDate: dueDate,
++          priority: _priority,
++          status: _status,
++          courseId: _selectedSubjectId,
++          courseName: subjectName,
++          lecturerName: lecturerName,
++        ),
++      );
+     } catch (e) {
+       debugPrint('Error schedule notif: $e');
+     }
+@@ -590,7 +484,11 @@ class _TaskFormPageState extends State<TaskFormPage> {
+         'dosen_pengampu': _selectedLecturerName,
+         'gambar_url': _uploadedImageUrl,
+         'waktu_reminder': _selectedDate?.toIso8601String(),
+-        'author_email': user!.email,
++        'created_by': user!.id,
++        'target_role': _targetRole?.value,
++        'priority': _priority.name,
++        'status': _status.name,
++        'author_email': user.email,
+         'author_name': user.userMetadata?['name'] ?? 'Mahasiswa',
+         'author_nim': user.userMetadata?['nim'] ?? '-',
+         'author_avatar_url': user.userMetadata?['avatar_url'],
+@@ -615,6 +513,7 @@ class _TaskFormPageState extends State<TaskFormPage> {
+           data.remove('author_email');
+           data.remove('author_name');
+           data.remove('author_nim');
++          data.remove('created_by');
+           await Supabase.instance.client.from('tasks').update(data).match({
+             'id': _taskId!,
+           });
+@@ -639,10 +538,9 @@ class _TaskFormPageState extends State<TaskFormPage> {
+ 
+   @override
+   Widget build(BuildContext context) {
+-    final bool canAddSubject =
+-        _userRole == 'admin' ||
+-        _userRole == 'Wakil Ketua Kelas' ||
+-        _userRole == 'Ketua Kelas';
++    final bool canAddSubject = AuthService.instance.hasPermission(
++      AppPermission.manageCourses,
++    );
+ 
+     return Scaffold(
+       backgroundColor: Colors.white,
+@@ -859,6 +757,67 @@ class _TaskFormPageState extends State<TaskFormPage> {
+ 
+               const SizedBox(height: 32),
+ 
++              _buildSectionHeader("AKSES & STATUS"),
++              Row(
++                children: [
++                  Expanded(
++                    child: DropdownButtonFormField<ReminderPriority>(
++                      value: _priority,
++                      decoration: const InputDecoration(labelText: 'Prioritas'),
++                      items: ReminderPriority.values
++                          .map(
++                            (item) => DropdownMenuItem(
++                              value: item,
++                              child: Text(item.label),
++                            ),
++                          )
++                          .toList(),
++                      onChanged: (value) {
++                        if (value != null) setState(() => _priority = value);
++                      },
++                    ),
++                  ),
++                  const SizedBox(width: 12),
++                  Expanded(
++                    child: DropdownButtonFormField<ReminderStatus>(
++                      value: _status,
++                      decoration: const InputDecoration(labelText: 'Status'),
++                      items: ReminderStatus.values
++                          .map(
++                            (item) => DropdownMenuItem(
++                              value: item,
++                              child: Text(item.label),
++                            ),
++                          )
++                          .toList(),
++                      onChanged: (value) {
++                        if (value != null) setState(() => _status = value);
++                      },
++                    ),
++                  ),
++                ],
++              ),
++              const SizedBox(height: 12),
++              DropdownButtonFormField<UserRole?>(
++                value: _targetRole,
++                decoration: const InputDecoration(labelText: 'Target role'),
++                items: [
++                  const DropdownMenuItem<UserRole?>(
++                    value: null,
++                    child: Text('Semua role'),
++                  ),
++                  ...UserRole.values.map(
++                    (item) => DropdownMenuItem<UserRole?>(
++                      value: item,
++                      child: Text(item.label),
++                    ),
++                  ),
++                ],
++                onChanged: (value) => setState(() => _targetRole = value),
++              ),
++
++              const SizedBox(height: 32),
++
+               // 5. IMAGE ATTACHMENT
+               _buildSectionHeader("LAMPIRAN"),
+               InkWell(
+diff --git a/lib/pages/user_management_page.dart b/lib/pages/user_management_page.dart
+new file mode 100644
+index 0000000..dbe572c
+--- /dev/null
++++ b/lib/pages/user_management_page.dart
+@@ -0,0 +1,147 @@
++import 'package:flutter/material.dart';
++import 'package:flutter_easyloading/flutter_easyloading.dart';
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import '../models/app_user.dart';
++import '../models/user_role.dart';
++import '../services/auth_service.dart';
++
++class UserManagementPage extends StatefulWidget {
++  const UserManagementPage({super.key});
++
++  @override
++  State<UserManagementPage> createState() => _UserManagementPageState();
++}
++
++class _UserManagementPageState extends State<UserManagementPage> {
++  final _searchController = TextEditingController();
++  List<AppUser> _users = [];
++  bool _loading = true;
++
++  @override
++  void initState() {
++    super.initState();
++    _loadUsers();
++    _searchController.addListener(() => setState(() {}));
++  }
++
++  @override
++  void dispose() {
++    _searchController.dispose();
++    super.dispose();
++  }
++
++  Future<void> _loadUsers() async {
++    setState(() => _loading = true);
++    try {
++      final rows = await Supabase.instance.client
++          .from('profiles')
++          .select()
++          .order('display_name');
++      if (!mounted) return;
++      setState(() {
++        _users = (rows as List)
++            .map((item) => AppUser.fromMap(Map<String, dynamic>.from(item)))
++            .toList();
++        _loading = false;
++      });
++    } catch (error) {
++      if (!mounted) return;
++      setState(() => _loading = false);
++      EasyLoading.showError('Gagal memuat user: $error');
++    }
++  }
++
++  Future<void> _changeRole(AppUser user, UserRole role) async {
++    if (user.id == AuthService.instance.currentUser?.id &&
++        role != UserRole.admin) {
++      EasyLoading.showError('Admin tidak dapat menurunkan role akun sendiri.');
++      return;
++    }
++    try {
++      EasyLoading.show(status: 'Menyimpan role...');
++      await AuthService.instance.updateUserRole(user.id, role);
++      await _loadUsers();
++      EasyLoading.showSuccess('Role diperbarui');
++    } catch (error) {
++      EasyLoading.showError('Gagal memperbarui role: $error');
++    }
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    final query = _searchController.text.toLowerCase();
++    final visible = _users.where((user) {
++      return user.displayName.toLowerCase().contains(query) ||
++          user.email.toLowerCase().contains(query);
++    }).toList();
++
++    return Scaffold(
++      appBar: AppBar(title: const Text('Kelola User')),
++      body: Column(
++        children: [
++          Padding(
++            padding: const EdgeInsets.all(16),
++            child: TextField(
++              controller: _searchController,
++              decoration: const InputDecoration(
++                hintText: 'Cari nama atau email',
++                prefixIcon: Icon(Icons.search_rounded),
++              ),
++            ),
++          ),
++          Expanded(
++            child: _loading
++                ? const Center(child: CircularProgressIndicator())
++                : RefreshIndicator(
++                    onRefresh: _loadUsers,
++                    child: ListView.separated(
++                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
++                      itemCount: visible.length,
++                      separatorBuilder: (_, _) => const SizedBox(height: 8),
++                      itemBuilder: (context, index) {
++                        final user = visible[index];
++                        return Card(
++                          child: ListTile(
++                            leading: CircleAvatar(
++                              child: Text(
++                                user.displayName.isEmpty
++                                    ? '?'
++                                    : user.displayName[0].toUpperCase(),
++                              ),
++                            ),
++                            title: Text(
++                              user.displayName,
++                              style: const TextStyle(
++                                fontWeight: FontWeight.w700,
++                              ),
++                            ),
++                            subtitle: Text(user.email),
++                            trailing: DropdownButton<UserRole>(
++                              value: user.role,
++                              underline: const SizedBox(),
++                              items: UserRole.values
++                                  .map(
++                                    (role) => DropdownMenuItem(
++                                      value: role,
++                                      child: Text(role.label),
++                                    ),
++                                  )
++                                  .toList(),
++                              onChanged: (role) {
++                                if (role != null && role != user.role) {
++                                  _changeRole(user, role);
++                                }
++                              },
++                            ),
++                          ),
++                        );
++                      },
++                    ),
++                  ),
++          ),
++        ],
++      ),
++    );
++  }
++}
+diff --git a/lib/register_page.dart b/lib/register_page.dart
+index ece8ebc..5a9a965 100644
+--- a/lib/register_page.dart
++++ b/lib/register_page.dart
+@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
+ import 'package:flutter_easyloading/flutter_easyloading.dart';
+ import 'package:supabase_flutter/supabase_flutter.dart';
+ 
++import 'models/user_role.dart';
++
+ class RegisterPage extends StatefulWidget {
+-  const RegisterPage({Key? key}) : super(key: key);
++  const RegisterPage({super.key});
+ 
+   @override
+   State<RegisterPage> createState() => _RegisterPageState();
+@@ -11,7 +13,7 @@ class RegisterPage extends StatefulWidget {
+ 
+ class _RegisterPageState extends State<RegisterPage> {
+   final _formKey = GlobalKey<FormState>();
+-  
++
+   // Controllers
+   final _nameController = TextEditingController();
+   final _nimController = TextEditingController();
+@@ -41,7 +43,10 @@ class _RegisterPageState extends State<RegisterPage> {
+         backgroundColor: Colors.white,
+         elevation: 0,
+         leading: IconButton(
+-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.black87),
++          icon: const Icon(
++            Icons.arrow_back_ios_new_rounded,
++            color: Colors.black87,
++          ),
+           onPressed: () => Navigator.pop(context),
+         ),
+       ),
+@@ -84,7 +89,7 @@ class _RegisterPageState extends State<RegisterPage> {
+                         icon: Icons.person_outline_rounded,
+                       ),
+                       const SizedBox(height: 16),
+-                      
++
+                       _buildTextField(
+                         controller: _nimController,
+                         label: "NIM",
+@@ -105,7 +110,7 @@ class _RegisterPageState extends State<RegisterPage> {
+ 
+                       // Password Field Custom (dengan Show/Hide)
+                       _buildPasswordField(),
+-                      
++
+                       const SizedBox(height: 32),
+ 
+                       // 3. Action Button
+@@ -230,10 +235,16 @@ class _RegisterPageState extends State<RegisterPage> {
+           decoration: InputDecoration(
+             hintText: "••••••••",
+             hintStyle: TextStyle(color: Colors.grey[400]),
+-            prefixIcon: Icon(Icons.lock_outline_rounded, color: Colors.grey[500], size: 22),
++            prefixIcon: Icon(
++              Icons.lock_outline_rounded,
++              color: Colors.grey[500],
++              size: 22,
++            ),
+             suffixIcon: IconButton(
+               icon: Icon(
+-                _isPasswordVisible ? Icons.visibility_rounded : Icons.visibility_off_rounded,
++                _isPasswordVisible
++                    ? Icons.visibility_rounded
++                    : Icons.visibility_off_rounded,
+                 color: Colors.grey,
+               ),
+               onPressed: () {
+@@ -275,15 +286,15 @@ class _RegisterPageState extends State<RegisterPage> {
+           data: {
+             'name': _nameController.text.trim(),
+             'nim': _nimController.text.trim(),
+-            'role': 'Mahasiswa', // Default role (optional)
++            'role': UserRole.student.value,
+           },
+         );
+ 
+         EasyLoading.showSuccess("Registrasi Berhasil!");
+-        
++
+         // Delay sedikit agar user sempat membaca pesan sukses
+         await Future.delayed(const Duration(milliseconds: 1500));
+-        
++
+         if (mounted) {
+           Navigator.pop(context); // Kembali ke halaman Login
+         }
+@@ -293,4 +304,4 @@ class _RegisterPageState extends State<RegisterPage> {
+       }
+     }
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/routing/app_router.dart b/lib/routing/app_router.dart
+new file mode 100644
+index 0000000..3e99e4a
+--- /dev/null
++++ b/lib/routing/app_router.dart
+@@ -0,0 +1,124 @@
++import 'package:flutter/material.dart';
++
++import '../home_page.dart';
++import '../login_page.dart';
++import '../models/user_role.dart';
++import '../pages/access_denied_page.dart';
++import '../pages/announcement_page.dart';
++import '../pages/class_board_page.dart';
++import '../pages/create_class_page.dart';
++import '../pages/profile_page.dart';
++import '../pages/role_dashboard_page.dart';
++import '../pages/schedule_page.dart';
++import '../pages/subject_management_page.dart';
++import '../pages/task_form_page.dart';
++import '../pages/user_management_page.dart';
++import '../register_page.dart';
++import 'auth_guard.dart';
++import 'role_guard.dart';
++
++abstract final class AppRouter {
++  static const _allRoles = {
++    UserRole.admin,
++    UserRole.lecturer,
++    UserRole.classLeader,
++    UserRole.student,
++  };
++
++  static Route<dynamic> onGenerateRoute(RouteSettings settings) {
++    switch (settings.name) {
++      case '/login':
++        return MaterialPageRoute(
++          settings: settings,
++          builder: (_) => const LoginPage(),
++        );
++      case '/register':
++        return MaterialPageRoute(
++          settings: settings,
++          builder: (_) => const RegisterPage(),
++        );
++      case '/dashboard/admin':
++        return _dashboard(settings, UserRole.admin);
++      case '/dashboard/lecturer':
++        return _dashboard(settings, UserRole.lecturer);
++      case '/dashboard/class-leader':
++        return _dashboard(settings, UserRole.classLeader);
++      case '/dashboard/student':
++        return _dashboard(settings, UserRole.student);
++      case '/home':
++      case '/classes':
++        return AuthGuard.protect(
++          settings: settings,
++          builder: (_) => const HomePage(),
++        );
++      case '/create-class':
++        return RoleGuard.protect(
++          settings: settings,
++          allowedRoles: const {UserRole.admin, UserRole.lecturer},
++          builder: (_) => const CreateClassPage(),
++        );
++      case '/class-board':
++        return AuthGuard.protect(
++          settings: settings,
++          builder: (_) => const ClassBoardPage(),
++        );
++      case '/task-form':
++        return RoleGuard.protect(
++          settings: settings,
++          allowedRoles: const {
++            UserRole.admin,
++            UserRole.lecturer,
++            UserRole.classLeader,
++          },
++          builder: (_) => const TaskFormPage(),
++        );
++      case '/schedule':
++        return RoleGuard.protect(
++          settings: settings,
++          allowedRoles: _allRoles,
++          builder: (_) => const SchedulePage(),
++        );
++      case '/profile':
++        return AuthGuard.protect(
++          settings: settings,
++          builder: (_) => const ProfilePage(),
++        );
++      case '/manage-subjects':
++        return RoleGuard.protect(
++          settings: settings,
++          allowedRoles: const {UserRole.admin, UserRole.lecturer},
++          builder: (_) => const SubjectManagementPage(),
++        );
++      case '/announcements':
++        return AuthGuard.protect(
++          settings: settings,
++          builder: (_) => const AnnouncementPage(),
++        );
++      case '/users':
++        return RoleGuard.protect(
++          settings: settings,
++          allowedRoles: const {UserRole.admin},
++          builder: (_) => const UserManagementPage(),
++        );
++      case '/access-denied':
++        return MaterialPageRoute(
++          settings: settings,
++          builder: (_) => const AccessDeniedPage(),
++        );
++      default:
++        return MaterialPageRoute(
++          settings: settings,
++          builder: (_) =>
++              const AccessDeniedPage(message: 'Halaman tidak ditemukan.'),
++        );
++    }
++  }
++
++  static Route<dynamic> _dashboard(RouteSettings settings, UserRole role) {
++    return RoleGuard.protect(
++      settings: settings,
++      allowedRoles: {role},
++      builder: (_) => RoleDashboardPage(role: role),
++    );
++  }
++}
+diff --git a/lib/routing/auth_guard.dart b/lib/routing/auth_guard.dart
+new file mode 100644
+index 0000000..853cc60
+--- /dev/null
++++ b/lib/routing/auth_guard.dart
+@@ -0,0 +1,19 @@
++import 'package:flutter/material.dart';
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import '../login_page.dart';
++
++abstract final class AuthGuard {
++  static Route<dynamic> protect({
++    required RouteSettings settings,
++    required WidgetBuilder builder,
++  }) {
++    if (Supabase.instance.client.auth.currentUser == null) {
++      return MaterialPageRoute(
++        settings: settings,
++        builder: (_) => const LoginPage(),
++      );
++    }
++    return MaterialPageRoute(settings: settings, builder: builder);
++  }
++}
+diff --git a/lib/routing/navigation.dart b/lib/routing/navigation.dart
+new file mode 100644
+index 0000000..5691d87
+--- /dev/null
++++ b/lib/routing/navigation.dart
+@@ -0,0 +1,3 @@
++import 'package:flutter/material.dart';
++
++final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+diff --git a/lib/routing/role_guard.dart b/lib/routing/role_guard.dart
+new file mode 100644
+index 0000000..5b0f8ac
+--- /dev/null
++++ b/lib/routing/role_guard.dart
+@@ -0,0 +1,25 @@
++import 'package:flutter/material.dart';
++
++import '../models/user_role.dart';
++import '../pages/access_denied_page.dart';
++import '../services/auth_service.dart';
++import 'auth_guard.dart';
++
++abstract final class RoleGuard {
++  static Route<dynamic> protect({
++    required RouteSettings settings,
++    required Set<UserRole> allowedRoles,
++    required WidgetBuilder builder,
++  }) {
++    return AuthGuard.protect(
++      settings: settings,
++      builder: (context) {
++        final role = AuthService.instance.currentRole;
++        if (!allowedRoles.contains(role)) {
++          return const AccessDeniedPage();
++        }
++        return builder(context);
++      },
++    );
++  }
++}
+diff --git a/lib/services/announcement_service.dart b/lib/services/announcement_service.dart
+new file mode 100644
+index 0000000..9ff3c76
+--- /dev/null
++++ b/lib/services/announcement_service.dart
+@@ -0,0 +1,40 @@
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import '../models/announcement.dart';
++
++class AnnouncementService {
++  AnnouncementService({SupabaseClient? client})
++    : _client = client ?? Supabase.instance.client;
++
++  final SupabaseClient _client;
++
++  Future<List<Announcement>> fetchVisible() async {
++    final rows = await _client
++        .from('announcements')
++        .select('*, profiles!announcements_created_by_fkey(display_name)')
++        .order('created_at', ascending: false);
++    return (rows as List)
++        .map((item) => Announcement.fromMap(Map<String, dynamic>.from(item)))
++        .toList();
++  }
++
++  Future<Announcement> create(Announcement announcement) async {
++    final row = await _client
++        .from('announcements')
++        .insert(announcement.toMap())
++        .select()
++        .single();
++    return Announcement.fromMap(row);
++  }
++
++  Future<void> update(Announcement announcement) async {
++    await _client
++        .from('announcements')
++        .update(announcement.toMap()..remove('created_by'))
++        .eq('id', announcement.id);
++  }
++
++  Future<void> delete(int id) async {
++    await _client.from('announcements').delete().eq('id', id);
++  }
++}
+diff --git a/lib/services/auth_service.dart b/lib/services/auth_service.dart
+new file mode 100644
+index 0000000..841a1de
+--- /dev/null
++++ b/lib/services/auth_service.dart
+@@ -0,0 +1,108 @@
++import 'package:flutter/foundation.dart';
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import '../models/app_user.dart';
++import '../models/user_role.dart';
++
++class AuthService {
++  AuthService._();
++
++  static final AuthService instance = AuthService._();
++
++  final ValueNotifier<AppUser?> session = ValueNotifier<AppUser?>(null);
++
++  SupabaseClient get _client => Supabase.instance.client;
++
++  AppUser? get currentUser => session.value;
++
++  UserRole get currentRole =>
++      currentUser?.role ??
++      UserRole.fromValue(_client.auth.currentUser?.userMetadata?['role']);
++
++  bool hasPermission(AppPermission permission) {
++    return PermissionPolicy.allows(currentRole, permission);
++  }
++
++  Future<AppUser?> refreshSession() async {
++    final authUser = _client.auth.currentUser;
++    if (authUser == null) {
++      session.value = null;
++      return null;
++    }
++
++    Map<String, dynamic>? profile;
++    try {
++      profile = await _client
++          .from('profiles')
++          .select()
++          .eq('id', authUser.id)
++          .maybeSingle();
++    } on PostgrestException catch (error) {
++      debugPrint('Profiles belum tersedia: ${error.message}');
++    }
++
++    var role = UserRole.fromValue(
++      profile?['role'] ?? authUser.userMetadata?['role'],
++    );
++
++    // Compatibility for installations that have not run the profiles migration.
++    if (role == UserRole.student && authUser.email != null) {
++      try {
++        final memberships = await _client
++            .from('anggota_kelas')
++            .select('role')
++            .eq('user_email', authUser.email!)
++            .limit(50);
++        if ((memberships as List).any(
++          (item) => PermissionPolicy.isClassLeader(item['role']),
++        )) {
++          role = UserRole.classLeader;
++        }
++      } on PostgrestException catch (error) {
++        debugPrint('Gagal membaca role kelas: ${error.message}');
++      }
++    }
++
++    final metadata = authUser.userMetadata ?? const <String, dynamic>{};
++    final appUser = AppUser(
++      id: authUser.id,
++      email: authUser.email ?? profile?['email']?.toString() ?? '',
++      displayName:
++          profile?['display_name']?.toString() ??
++          metadata['name']?.toString() ??
++          'Pengguna',
++      studentNumber:
++          profile?['student_number']?.toString() ?? metadata['nim']?.toString(),
++      avatarUrl:
++          profile?['avatar_url']?.toString() ??
++          metadata['avatar_url']?.toString(),
++      role: role,
++    );
++    session.value = appUser;
++    return appUser;
++  }
++
++  Future<void> updateUserRole(String userId, UserRole role) async {
++    await _client
++        .from('profiles')
++        .update({'role': role.value})
++        .eq('id', userId);
++    if (userId == currentUser?.id) {
++      await refreshSession();
++    }
++  }
++
++  Future<void> signOut() async {
++    await _client.auth.signOut();
++    session.value = null;
++  }
++
++  String dashboardRoute([UserRole? role]) {
++    return switch (role ?? currentRole) {
++      UserRole.admin => '/dashboard/admin',
++      UserRole.lecturer => '/dashboard/lecturer',
++      UserRole.classLeader => '/dashboard/class-leader',
++      UserRole.student => '/dashboard/student',
++    };
++  }
++}
+diff --git a/lib/services/class_service.dart b/lib/services/class_service.dart
+new file mode 100644
+index 0000000..e5ed9c5
+--- /dev/null
++++ b/lib/services/class_service.dart
+@@ -0,0 +1,84 @@
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import '../models/class_model.dart';
++import '../models/user_role.dart';
++
++class ClassService {
++  ClassService({SupabaseClient? client})
++    : _client = client ?? Supabase.instance.client;
++
++  final SupabaseClient _client;
++
++  Future<List<Map<String, dynamic>>> fetchClassCards({
++    required UserRole role,
++  }) async {
++    final user = _client.auth.currentUser;
++    if (user == null) return [];
++
++    if (role == UserRole.admin) {
++      final rows = await _client
++          .from('kelas')
++          .select()
++          .order('created_at', ascending: false);
++      return (rows as List)
++          .map(
++            (item) => {
++              'role': UserRole.admin.value,
++              'kelas': Map<String, dynamic>.from(item),
++            },
++          )
++          .toList();
++    }
++
++    if (role == UserRole.lecturer) {
++      final courses = await _client
++          .from('matakuliah')
++          .select('kelas(*)')
++          .eq('lecturer_id', user.id);
++      final unique = <int, Map<String, dynamic>>{};
++      for (final item in courses as List) {
++        final classData = item['kelas'];
++        if (classData is Map && classData['id'] is int) {
++          unique[classData['id'] as int] = Map<String, dynamic>.from(classData);
++        }
++      }
++      if (user.email != null) {
++        final memberships = await _client
++            .from('anggota_kelas')
++            .select('kelas(*)')
++            .eq('user_email', user.email!);
++        for (final item in memberships as List) {
++          final classData = item['kelas'];
++          if (classData is Map && classData['id'] is int) {
++            unique[classData['id'] as int] = Map<String, dynamic>.from(
++              classData,
++            );
++          }
++        }
++      }
++      return unique.values
++          .map((item) => {'role': UserRole.lecturer.value, 'kelas': item})
++          .toList();
++    }
++
++    final rows = await _client
++        .from('anggota_kelas')
++        .select('role, kelas(*)')
++        .eq('user_email', user.email!)
++        .order('created_at', ascending: false);
++    return List<Map<String, dynamic>>.from(rows);
++  }
++
++  Future<List<ClassModel>> fetchAccessibleClasses(UserRole role) async {
++    final cards = await fetchClassCards(role: role);
++    return cards
++        .map((item) => item['kelas'])
++        .whereType<Map>()
++        .map((item) => ClassModel.fromMap(Map<String, dynamic>.from(item)))
++        .toList();
++  }
++
++  Future<void> joinByCode(String code) async {
++    await _client.rpc('join_class', params: {'access_code': code.trim()});
++  }
++}
+diff --git a/lib/services/course_service.dart b/lib/services/course_service.dart
+new file mode 100644
+index 0000000..d673c7c
+--- /dev/null
++++ b/lib/services/course_service.dart
+@@ -0,0 +1,38 @@
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import '../models/course.dart';
++
++class CourseService {
++  CourseService({SupabaseClient? client})
++    : _client = client ?? Supabase.instance.client;
++
++  final SupabaseClient _client;
++
++  Future<List<Course>> fetchByClass(int classId) async {
++    final rows = await _client
++        .from('matakuliah')
++        .select()
++        .eq('kelas_id', classId)
++        .order('nama');
++    return (rows as List)
++        .map((item) => Course.fromMap(Map<String, dynamic>.from(item)))
++        .toList();
++  }
++
++  Future<Course> create(Course course) async {
++    final row = await _client
++        .from('matakuliah')
++        .insert(course.toMap())
++        .select()
++        .single();
++    return Course.fromMap(row);
++  }
++
++  Future<void> update(Course course) async {
++    await _client.from('matakuliah').update(course.toMap()).eq('id', course.id);
++  }
++
++  Future<void> delete(int id) async {
++    await _client.from('matakuliah').delete().eq('id', id);
++  }
++}
+diff --git a/lib/services/notification_service.dart b/lib/services/notification_service.dart
+index adafd2b..eb8796f 100644
+--- a/lib/services/notification_service.dart
++++ b/lib/services/notification_service.dart
+@@ -1,25 +1,17 @@
+ import 'dart:io';
+-import 'dart:math'; // Import dart:math untuk random generator
+ import 'package:flutter/material.dart';
+ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
++import 'package:intl/intl.dart';
+ import 'package:timezone/data/latest_all.dart' as tz;
+ import 'package:timezone/timezone.dart' as tz;
+ import 'package:supabase_flutter/supabase_flutter.dart';
+-import '../main.dart'; 
++import '../models/reminder.dart';
++import '../routing/navigation.dart';
+ 
+ class NotificationService {
+   static final FlutterLocalNotificationsPlugin _notifications =
+       FlutterLocalNotificationsPlugin();
+ 
+-  // Helper function untuk generate GUID sederhana
+-  static String _generateGuid() {
+-    final Random random = Random();
+-    String s4() {
+-      return (random.nextInt(0xFFFF) + 0x10000).toRadixString(16).substring(1);
+-    }
+-    return '${s4()}${s4()}-${s4()}-${s4()}-${s4()}-${s4()}${s4()}${s4()}';
+-  }
+-
+   static Future<void> init() async {
+     // 1. Setup Timezone
+     tz.initializeTimeZones();
+@@ -36,10 +28,10 @@ class NotificationService {
+     // 3. Setup iOS & macOS
+     const DarwinInitializationSettings iosSettings =
+         DarwinInitializationSettings(
+-      requestAlertPermission: true,
+-      requestBadgePermission: true,
+-      requestSoundPermission: true,
+-    );
++          requestAlertPermission: true,
++          requestBadgePermission: true,
++          requestSoundPermission: true,
++        );
+ 
+     // 4. Setup Linux
+     final LinuxInitializationSettings linuxSettings =
+@@ -51,13 +43,11 @@ class NotificationService {
+       iOS: iosSettings,
+       macOS: iosSettings,
+       linux: linuxSettings,
+-      // --- PERBAIKAN: Windows Settings dengan Auto-Generated GUID ---
+       windows: WindowsInitializationSettings(
+         appName: 'ReminderKita',
+-        appUserModelId: 'com.reminderkita.app', 
+-        guid: _generateGuid(), // GUID dibuat otomatis di sini
++        appUserModelId: 'com.reminderkita.app',
++        guid: 'f3781fd7-37f8-4d59-9f42-a2fe6bb317d5',
+       ),
+-      // -----------------------------------------------------------
+     );
+ 
+     await _notifications.initialize(
+@@ -65,9 +55,15 @@ class NotificationService {
+       onDidReceiveNotificationResponse: (NotificationResponse response) {
+         final user = Supabase.instance.client.auth.currentUser;
+         if (user == null) {
+-          navigatorKey.currentState?.pushNamedAndRemoveUntil('/login', (route) => false);
++          navigatorKey.currentState?.pushNamedAndRemoveUntil(
++            '/login',
++            (route) => false,
++          );
+         } else {
+-          navigatorKey.currentState?.pushNamedAndRemoveUntil('/home', (route) => false);
++          navigatorKey.currentState?.pushNamedAndRemoveUntil(
++            '/classes',
++            (route) => false,
++          );
+         }
+       },
+     );
+@@ -75,8 +71,10 @@ class NotificationService {
+     // 6. Create Channel (Android Only)
+     if (Platform.isAndroid) {
+       final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
+-          _notifications.resolvePlatformSpecificImplementation<
+-              AndroidFlutterLocalNotificationsPlugin>();
++          _notifications
++              .resolvePlatformSpecificImplementation<
++                AndroidFlutterLocalNotificationsPlugin
++              >();
+ 
+       await androidImplementation?.requestNotificationsPermission();
+ 
+@@ -92,14 +90,46 @@ class NotificationService {
+   }
+ 
+   static Future<void> cancelTaskNotifications(int taskId) async {
+-    for (int i = 1; i <= 10; i++) {
++    for (int i = 1; i <= 4; i++) {
+       await _notifications.cancel(taskId * 10 + i);
+     }
+   }
+ 
++  static Future<void> scheduleReminder(Reminder reminder) async {
++    await cancelTaskNotifications(reminder.id);
++    if (reminder.status != ReminderStatus.pending) return;
++
++    final schedules = <({int slot, Duration offset, String label})>[
++      (slot: 1, offset: const Duration(days: 7), label: 'H-7'),
++      (slot: 2, offset: const Duration(days: 3), label: 'H-3'),
++      (slot: 3, offset: const Duration(days: 1), label: 'H-1'),
++      (slot: 4, offset: Duration.zero, label: 'Hari H'),
++    ];
++    final dueLabel = DateFormat(
++      'd MMM yyyy, HH:mm',
++      'id_ID',
++    ).format(reminder.dueDate.toLocal());
++
++    for (final item in schedules) {
++      final scheduledAt = reminder.dueDate.subtract(item.offset);
++      if (!scheduledAt.isAfter(DateTime.now())) continue;
++      await schedule(
++        reminder.id * 10 + item.slot,
++        '${item.label}: ${reminder.title}',
++        'Tenggat $dueLabel. Prioritas ${reminder.priority.label}.',
++        scheduledAt,
++        'reminder:${reminder.id}:${reminder.targetClass}',
++      );
++    }
++  }
++
+   static Future<void> schedule(
+-      int id, String title, String body, DateTime scheduledDate, String payload) async {
+-    
++    int id,
++    String title,
++    String body,
++    DateTime scheduledDate,
++    String payload,
++  ) async {
+     if (scheduledDate.isBefore(DateTime.now())) return;
+ 
+     await _notifications.zonedSchedule(
+@@ -123,4 +153,4 @@ class NotificationService {
+       payload: payload,
+     );
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/services/reminder_service.dart b/lib/services/reminder_service.dart
+new file mode 100644
+index 0000000..45eceae
+--- /dev/null
++++ b/lib/services/reminder_service.dart
+@@ -0,0 +1,42 @@
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import '../models/reminder.dart';
++
++class ReminderService {
++  ReminderService({SupabaseClient? client})
++    : _client = client ?? Supabase.instance.client;
++
++  final SupabaseClient _client;
++
++  Future<List<Reminder>> fetchByClass(int classId) async {
++    final rows = await _client
++        .from('tasks')
++        .select()
++        .eq('kelas_id', classId)
++        .order('waktu_reminder');
++    return (rows as List)
++        .map((item) => Reminder.fromMap(Map<String, dynamic>.from(item)))
++        .toList();
++  }
++
++  Future<Reminder> create(Reminder reminder) async {
++    final row = await _client
++        .from('tasks')
++        .insert(reminder.toMap())
++        .select()
++        .single();
++    return Reminder.fromMap(row);
++  }
++
++  Future<void> update(Reminder reminder) async {
++    await _client.from('tasks').update(reminder.toMap()).eq('id', reminder.id);
++  }
++
++  Future<void> updateStatus(int id, ReminderStatus status) async {
++    await _client.from('tasks').update({'status': status.name}).eq('id', id);
++  }
++
++  Future<void> delete(int id) async {
++    await _client.from('tasks').delete().eq('id', id);
++  }
++}
+diff --git a/lib/services/schedule_service.dart b/lib/services/schedule_service.dart
+new file mode 100644
+index 0000000..b63d174
+--- /dev/null
++++ b/lib/services/schedule_service.dart
+@@ -0,0 +1,37 @@
++import 'package:supabase_flutter/supabase_flutter.dart';
++
++import '../models/class_schedule.dart';
++
++class ScheduleService {
++  ScheduleService({SupabaseClient? client})
++    : _client = client ?? Supabase.instance.client;
++
++  final SupabaseClient _client;
++
++  Stream<List<ClassSchedule>> watchByClass(int classId) {
++    return _client
++        .from('jadwal_kelas')
++        .stream(primaryKey: ['id'])
++        .eq('kelas_id', classId)
++        .map(
++          (rows) => rows
++              .map((item) => ClassSchedule.fromMap(item))
++              .toList(growable: false),
++        );
++  }
++
++  Future<void> save(ClassSchedule schedule) async {
++    if (schedule.id == 0) {
++      await _client.from('jadwal_kelas').insert(schedule.toMap());
++      return;
++    }
++    await _client
++        .from('jadwal_kelas')
++        .update(schedule.toMap())
++        .eq('id', schedule.id);
++  }
++
++  Future<void> delete(int id) async {
++    await _client.from('jadwal_kelas').delete().eq('id', id);
++  }
++}
+diff --git a/pubspec.lock b/pubspec.lock
+index 29ee981..ff5dd84 100644
+--- a/pubspec.lock
++++ b/pubspec.lock
+@@ -214,14 +214,6 @@ packages:
+     description: flutter
+     source: sdk
+     version: "0.0.0"
+-  flutter_dotenv:
+-    dependency: "direct main"
+-    description:
+-      name: flutter_dotenv
+-      sha256: b7c7be5cd9f6ef7a78429cabd2774d3c4af50e79cb2b7593e3d5d763ef95c61b
+-      url: "https://pub.dev"
+-    source: hosted
+-    version: "5.2.1"
+   flutter_easyloading:
+     dependency: "direct main"
+     description:
+diff --git a/pubspec.yaml b/pubspec.yaml
+index 727d67d..75bade0 100644
+--- a/pubspec.yaml
++++ b/pubspec.yaml
+@@ -17,7 +17,6 @@ dependencies:
+   timezone: ^0.10.1
+   google_fonts: ^6.1.0
+   image_picker: ^1.0.4
+-  flutter_dotenv: ^5.1.0
+   flutter_localizations:
+     sdk: flutter
+ 
+@@ -28,5 +27,3 @@ dev_dependencies:
+ 
+ flutter:
+   uses-material-design: true
+-  assets:
+-    - .env
+diff --git a/supabase/README.md b/supabase/README.md
+new file mode 100644
+index 0000000..ff0477f
+--- /dev/null
++++ b/supabase/README.md
+@@ -0,0 +1,22 @@
++# Supabase Migration
++
++Apply migrations to a staging project first:
++
++```bash
++supabase db push
++```
++
++The RBAC migration replaces policies on the managed tables. Back up the
++database and review any custom policies before deployment.
++
++Bootstrap the first admin after the migration:
++
++```sql
++update public.profiles
++set role = 'admin'
++where email = 'admin@example.com';
++```
++
++Existing `tasks` remain in place and are exposed through the new Reminder
++domain model. Existing class leader strings such as `Ketua Kelas` and
++`Wakil Ketua Kelas` remain supported during migration.
+diff --git a/supabase/migrations/202606120001_rbac_modules.sql b/supabase/migrations/202606120001_rbac_modules.sql
+new file mode 100644
+index 0000000..6fd039e
+--- /dev/null
++++ b/supabase/migrations/202606120001_rbac_modules.sql
+@@ -0,0 +1,553 @@
++begin;
++
++create table if not exists public.profiles (
++  id uuid primary key references auth.users(id) on delete cascade,
++  email text not null unique,
++  display_name text not null default 'Pengguna',
++  student_number text,
++  role text not null default 'student'
++    check (role in ('admin', 'lecturer', 'class_leader', 'student')),
++  avatar_url text,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now()
++);
++
++insert into public.profiles (
++  id,
++  email,
++  display_name,
++  student_number,
++  role,
++  avatar_url
++)
++select
++  users.id,
++  coalesce(users.email, ''),
++  coalesce(users.raw_user_meta_data ->> 'name', 'Pengguna'),
++  users.raw_user_meta_data ->> 'nim',
++  case lower(coalesce(users.raw_user_meta_data ->> 'role', 'student'))
++    when 'admin' then 'admin'
++    when 'lecturer' then 'lecturer'
++    when 'dosen' then 'lecturer'
++    when 'class_leader' then 'class_leader'
++    when 'ketua kelas' then 'class_leader'
++    else 'student'
++  end,
++  users.raw_user_meta_data ->> 'avatar_url'
++from auth.users
++on conflict (id) do nothing;
++
++update public.profiles profile
++set role = 'class_leader'
++where profile.role = 'student'
++  and exists (
++    select 1
++    from public.anggota_kelas member
++    where lower(member.user_email) = lower(profile.email)
++      and lower(member.role) in ('ketua kelas', 'ketua', 'class_leader')
++  );
++
++create or replace function public.handle_new_user()
++returns trigger
++language plpgsql
++security definer
++set search_path = public
++as $$
++begin
++  insert into public.profiles (
++    id,
++    email,
++    display_name,
++    student_number,
++    role,
++    avatar_url
++  )
++  values (
++    new.id,
++    coalesce(new.email, ''),
++    coalesce(new.raw_user_meta_data ->> 'name', 'Pengguna'),
++    new.raw_user_meta_data ->> 'nim',
++    'student',
++    new.raw_user_meta_data ->> 'avatar_url'
++  )
++  on conflict (id) do update
++  set
++    email = excluded.email,
++    display_name = excluded.display_name,
++    student_number = excluded.student_number,
++    avatar_url = excluded.avatar_url,
++    updated_at = now();
++  return new;
++end;
++$$;
++
++drop trigger if exists on_auth_user_created on auth.users;
++create trigger on_auth_user_created
++  after insert or update of email, raw_user_meta_data on auth.users
++  for each row execute function public.handle_new_user();
++
++create or replace function public.current_user_role()
++returns text
++language sql
++stable
++security definer
++set search_path = public
++as $$
++  select case
++    when coalesce(
++      (select role from public.profiles where id = auth.uid()),
++      'student'
++    ) = 'student'
++    and exists (
++      select 1
++      from public.anggota_kelas member
++      where lower(member.user_email) =
++        lower(coalesce(auth.jwt() ->> 'email', ''))
++        and lower(member.role) in (
++          'admin',
++          'ketua kelas',
++          'ketua',
++          'class_leader'
++        )
++    )
++      then 'class_leader'
++    else coalesce(
++      (select role from public.profiles where id = auth.uid()),
++      'student'
++    )
++  end;
++$$;
++
++create or replace function public.is_admin()
++returns boolean
++language sql
++stable
++security definer
++set search_path = public
++as $$
++  select public.current_user_role() = 'admin';
++$$;
++
++create or replace function public.is_class_member(class_id bigint)
++returns boolean
++language sql
++stable
++security definer
++set search_path = public
++as $$
++  select exists (
++    select 1
++    from public.anggota_kelas member
++    where member.kelas_id = class_id
++      and lower(member.user_email) =
++        lower(coalesce(auth.jwt() ->> 'email', ''))
++  );
++$$;
++
++create or replace function public.is_class_leader(class_id bigint)
++returns boolean
++language sql
++stable
++security definer
++set search_path = public
++as $$
++  select exists (
++    select 1
++    from public.anggota_kelas member
++    where member.kelas_id = class_id
++      and lower(member.user_email) =
++        lower(coalesce(auth.jwt() ->> 'email', ''))
++      and lower(member.role) in (
++        'admin',
++        'ketua kelas',
++        'ketua',
++        'class_leader'
++      )
++  );
++$$;
++
++alter table if exists public.matakuliah
++  add column if not exists lecturer_id uuid references public.profiles(id);
++
++update public.matakuliah course
++set lecturer_id = profile.id
++from public.profiles profile
++where course.lecturer_id is null
++  and profile.role = 'lecturer'
++  and lower(trim(course.dosen)) = lower(trim(profile.display_name));
++
++create or replace function public.can_manage_class(class_id bigint)
++returns boolean
++language sql
++stable
++security definer
++set search_path = public
++as $$
++  select
++    public.is_admin()
++    or exists (
++      select 1
++      from public.kelas class
++      where class.id = class_id and class.created_by = auth.uid()
++    )
++    or public.is_class_leader(class_id)
++    or exists (
++      select 1
++      from public.matakuliah course
++      where course.kelas_id = class_id
++        and course.lecturer_id = auth.uid()
++    );
++$$;
++
++create or replace function public.prevent_unauthorized_role_change()
++returns trigger
++language plpgsql
++security definer
++set search_path = public
++as $$
++begin
++  if new.role is distinct from old.role and not public.is_admin() then
++    raise exception 'Only an admin can change user roles';
++  end if;
++  new.updated_at = now();
++  return new;
++end;
++$$;
++
++drop trigger if exists protect_profile_role on public.profiles;
++create trigger protect_profile_role
++  before update on public.profiles
++  for each row execute function public.prevent_unauthorized_role_change();
++
++alter table if exists public.tasks
++  add column if not exists created_by uuid references public.profiles(id),
++  add column if not exists target_role text
++    check (target_role is null or target_role in (
++      'admin',
++      'lecturer',
++      'class_leader',
++      'student'
++    )),
++  add column if not exists priority text not null default 'medium'
++    check (priority in ('low', 'medium', 'high', 'urgent')),
++  add column if not exists status text not null default 'pending'
++    check (status in ('pending', 'completed', 'expired'));
++
++update public.tasks task
++set created_by = profile.id
++from public.profiles profile
++where task.created_by is null
++  and lower(task.author_email) = lower(profile.email);
++
++create table if not exists public.announcements (
++  id bigint generated by default as identity primary key,
++  title text not null check (char_length(trim(title)) between 1 and 200),
++  content text not null check (char_length(trim(content)) between 1 and 10000),
++  created_by uuid not null
++    references public.profiles(id) on delete restrict,
++  target_class bigint references public.kelas(id) on delete cascade,
++  target_role text check (target_role is null or target_role in (
++    'admin',
++    'lecturer',
++    'class_leader',
++    'student'
++  )),
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now()
++);
++
++create index if not exists profiles_role_idx
++  on public.profiles(role);
++create index if not exists courses_lecturer_id_idx
++  on public.matakuliah(lecturer_id);
++create index if not exists tasks_target_idx
++  on public.tasks(kelas_id, target_role, waktu_reminder);
++create index if not exists announcements_target_idx
++  on public.announcements(target_class, target_role, created_at desc);
++
++create or replace function public.join_class(access_code text)
++returns bigint
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  target_class public.kelas%rowtype;
++  assigned_role text := 'student';
++  current_email text := coalesce(auth.jwt() ->> 'email', '');
++  current_profile public.profiles%rowtype;
++begin
++  if auth.uid() is null or trim(current_email) = '' then
++    raise exception 'Authentication required';
++  end if;
++
++  select *
++  into target_class
++  from public.kelas class
++  where upper(class.kode_kelas) = upper(trim(access_code))
++     or upper(class.kode_wakil) = upper(trim(access_code))
++  limit 1;
++
++  if not found then
++    raise exception 'Kode kelas tidak valid';
++  end if;
++  if not coalesce(target_class.is_open, true) then
++    raise exception 'Kelas sedang ditutup';
++  end if;
++  if upper(target_class.kode_wakil) = upper(trim(access_code)) then
++    assigned_role := 'class_leader';
++  end if;
++
++  select * into current_profile
++  from public.profiles
++  where id = auth.uid();
++
++  insert into public.anggota_kelas (
++    kelas_id,
++    user_email,
++    role,
++    user_name,
++    nim
++  )
++  values (
++    target_class.id,
++    current_email,
++    assigned_role,
++    coalesce(current_profile.display_name, 'Pengguna'),
++    coalesce(current_profile.student_number, '-')
++  )
++  on conflict do nothing;
++
++  return target_class.id;
++end;
++$$;
++
++alter table public.profiles enable row level security;
++alter table public.kelas enable row level security;
++alter table public.anggota_kelas enable row level security;
++alter table public.matakuliah enable row level security;
++alter table public.jadwal_kelas enable row level security;
++alter table public.tasks enable row level security;
++alter table public.announcements enable row level security;
++
++do $$
++declare
++  existing_policy record;
++begin
++  for existing_policy in
++    select schemaname, tablename, policyname
++    from pg_policies
++    where schemaname = 'public'
++      and tablename in (
++        'profiles',
++        'kelas',
++        'anggota_kelas',
++        'matakuliah',
++        'jadwal_kelas',
++        'tasks',
++        'announcements'
++      )
++  loop
++    execute format(
++      'drop policy if exists %I on %I.%I',
++      existing_policy.policyname,
++      existing_policy.schemaname,
++      existing_policy.tablename
++    );
++  end loop;
++end;
++$$;
++
++drop policy if exists profiles_select_rbac on public.profiles;
++create policy profiles_select_rbac on public.profiles
++  for select to authenticated
++  using (id = auth.uid() or public.is_admin());
++
++drop policy if exists profiles_update_rbac on public.profiles;
++create policy profiles_update_rbac on public.profiles
++  for update to authenticated
++  using (id = auth.uid() or public.is_admin())
++  with check (id = auth.uid() or public.is_admin());
++
++drop policy if exists classes_select_rbac on public.kelas;
++create policy classes_select_rbac on public.kelas
++  for select to authenticated
++  using (
++    public.is_admin()
++    or created_by = auth.uid()
++    or public.is_class_member(id)
++    or exists (
++      select 1
++      from public.matakuliah course
++      where course.kelas_id = id and course.lecturer_id = auth.uid()
++    )
++  );
++
++drop policy if exists classes_insert_rbac on public.kelas;
++create policy classes_insert_rbac on public.kelas
++  for insert to authenticated
++  with check (
++    created_by = auth.uid()
++    and public.current_user_role() in ('admin', 'lecturer', 'class_leader')
++  );
++
++drop policy if exists classes_update_rbac on public.kelas;
++create policy classes_update_rbac on public.kelas
++  for update to authenticated
++  using (public.can_manage_class(id))
++  with check (public.can_manage_class(id));
++
++drop policy if exists classes_delete_rbac on public.kelas;
++create policy classes_delete_rbac on public.kelas
++  for delete to authenticated
++  using (public.can_manage_class(id));
++
++drop policy if exists members_select_rbac on public.anggota_kelas;
++create policy members_select_rbac on public.anggota_kelas
++  for select to authenticated
++  using (
++    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
++    or public.can_manage_class(kelas_id)
++  );
++
++drop policy if exists members_insert_rbac on public.anggota_kelas;
++create policy members_insert_rbac on public.anggota_kelas
++  for insert to authenticated
++  with check (
++    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
++    or public.can_manage_class(kelas_id)
++  );
++
++drop policy if exists members_update_rbac on public.anggota_kelas;
++create policy members_update_rbac on public.anggota_kelas
++  for update to authenticated
++  using (public.can_manage_class(kelas_id))
++  with check (public.can_manage_class(kelas_id));
++
++drop policy if exists members_delete_rbac on public.anggota_kelas;
++create policy members_delete_rbac on public.anggota_kelas
++  for delete to authenticated
++  using (
++    lower(user_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
++    or public.can_manage_class(kelas_id)
++  );
++
++drop policy if exists courses_select_rbac on public.matakuliah;
++create policy courses_select_rbac on public.matakuliah
++  for select to authenticated
++  using (
++    public.is_class_member(kelas_id)
++    or public.can_manage_class(kelas_id)
++  );
++
++drop policy if exists courses_write_rbac on public.matakuliah;
++create policy courses_write_rbac on public.matakuliah
++  for all to authenticated
++  using (public.can_manage_class(kelas_id))
++  with check (public.can_manage_class(kelas_id));
++
++drop policy if exists schedules_select_rbac on public.jadwal_kelas;
++create policy schedules_select_rbac on public.jadwal_kelas
++  for select to authenticated
++  using (
++    public.is_class_member(kelas_id)
++    or public.can_manage_class(kelas_id)
++  );
++
++drop policy if exists schedules_write_rbac on public.jadwal_kelas;
++create policy schedules_write_rbac on public.jadwal_kelas
++  for all to authenticated
++  using (public.can_manage_class(kelas_id))
++  with check (public.can_manage_class(kelas_id));
++
++drop policy if exists reminders_select_rbac on public.tasks;
++create policy reminders_select_rbac on public.tasks
++  for select to authenticated
++  using (
++    (
++      public.is_class_member(kelas_id)
++      or public.can_manage_class(kelas_id)
++    )
++    and (
++      target_role is null
++      or target_role = public.current_user_role()
++      or public.is_admin()
++    )
++  );
++
++drop policy if exists reminders_write_rbac on public.tasks;
++drop policy if exists reminders_insert_rbac on public.tasks;
++create policy reminders_insert_rbac on public.tasks
++  for insert to authenticated
++  with check (
++    public.can_manage_class(kelas_id)
++    and created_by = auth.uid()
++  );
++
++drop policy if exists reminders_update_rbac on public.tasks;
++create policy reminders_update_rbac on public.tasks
++  for update to authenticated
++  using (public.can_manage_class(kelas_id))
++  with check (public.can_manage_class(kelas_id));
++
++drop policy if exists reminders_delete_rbac on public.tasks;
++create policy reminders_delete_rbac on public.tasks
++  for delete to authenticated
++  using (public.can_manage_class(kelas_id));
++
++drop policy if exists announcements_select_rbac on public.announcements;
++create policy announcements_select_rbac on public.announcements
++  for select to authenticated
++  using (
++    (
++      target_role is null
++      or target_role = public.current_user_role()
++      or public.is_admin()
++    )
++    and (
++      target_class is null
++      or public.is_class_member(target_class)
++      or public.can_manage_class(target_class)
++    )
++  );
++
++drop policy if exists announcements_insert_rbac on public.announcements;
++create policy announcements_insert_rbac on public.announcements
++  for insert to authenticated
++  with check (
++    created_by = auth.uid()
++    and (
++      public.current_user_role() in ('admin', 'lecturer')
++      or (
++        public.current_user_role() = 'class_leader'
++        and target_class is not null
++        and public.is_class_leader(target_class)
++      )
++    )
++  );
++
++drop policy if exists announcements_update_rbac on public.announcements;
++create policy announcements_update_rbac on public.announcements
++  for update to authenticated
++  using (created_by = auth.uid() or public.is_admin())
++  with check (
++    (created_by = auth.uid() or public.is_admin())
++    and (
++      public.current_user_role() in ('admin', 'lecturer')
++      or (
++        public.current_user_role() = 'class_leader'
++        and target_class is not null
++        and public.is_class_leader(target_class)
++      )
++    )
++  );
++
++drop policy if exists announcements_delete_rbac on public.announcements;
++create policy announcements_delete_rbac on public.announcements
++  for delete to authenticated
++  using (created_by = auth.uid() or public.is_admin());
++
++grant execute on function public.join_class(text) to authenticated;
++grant execute on function public.current_user_role() to authenticated;
++
++commit;
+diff --git a/test/rbac_models_test.dart b/test/rbac_models_test.dart
+new file mode 100644
+index 0000000..eaf352d
+--- /dev/null
++++ b/test/rbac_models_test.dart
+@@ -0,0 +1,83 @@
++import 'package:flutter_test/flutter_test.dart';
++import 'package:reminderkita/models/reminder.dart';
++import 'package:reminderkita/models/user_role.dart';
++
++void main() {
++  group('UserRole', () {
++    test('maps canonical and legacy role values', () {
++      expect(UserRole.fromValue('admin'), UserRole.admin);
++      expect(UserRole.fromValue('Dosen'), UserRole.lecturer);
++      expect(UserRole.fromValue('Ketua Kelas'), UserRole.classLeader);
++      expect(UserRole.fromValue('Wakil Ketua Kelas'), UserRole.classLeader);
++      expect(UserRole.fromValue('Mahasiswa'), UserRole.student);
++    });
++
++    test('enforces the expected permission matrix', () {
++      expect(
++        PermissionPolicy.allows(UserRole.admin, AppPermission.manageUsers),
++        isTrue,
++      );
++      expect(
++        PermissionPolicy.allows(
++          UserRole.lecturer,
++          AppPermission.manageSchedules,
++        ),
++        isTrue,
++      );
++      expect(
++        PermissionPolicy.allows(
++          UserRole.classLeader,
++          AppPermission.manageReminders,
++        ),
++        isTrue,
++      );
++      expect(
++        PermissionPolicy.allows(
++          UserRole.student,
++          AppPermission.manageReminders,
++        ),
++        isFalse,
++      );
++    });
++  });
++
++  group('Reminder', () {
++    test('maps the legacy tasks schema to the domain model', () {
++      final dueDate = DateTime.now().add(const Duration(days: 10));
++      final reminder = Reminder.fromMap({
++        'id': 7,
++        'judul': 'Ujian akhir',
++        'deskripsi': 'Ruang 301',
++        'created_by': 'user-id',
++        'kelas_id': 3,
++        'target_role': 'student',
++        'waktu_reminder': dueDate.toIso8601String(),
++        'priority': 'urgent',
++        'status': 'pending',
++      });
++
++      expect(reminder.title, 'Ujian akhir');
++      expect(reminder.targetClass, 3);
++      expect(reminder.targetRole, UserRole.student);
++      expect(reminder.priority, ReminderPriority.urgent);
++      expect(reminder.effectiveStatus, ReminderStatus.pending);
++    });
++
++    test('derives expired status for overdue pending reminders', () {
++      final reminder = Reminder(
++        id: 1,
++        title: 'Terlambat',
++        description: '',
++        createdBy: 'user-id',
++        targetClass: 1,
++        dueDate: DateTime.now().subtract(const Duration(minutes: 1)),
++        priority: ReminderPriority.high,
++        status: ReminderStatus.pending,
++      );
++
++      expect(reminder.effectiveStatus, ReminderStatus.expired);
++      expect(reminder.toMap()['priority'], 'high');
++      expect(reminder.toMap()['status'], 'pending');
++    });
++  });
++}
